@@ -53,14 +53,19 @@ Execution Order
    - guide panel
 
 Current Progress
-- Phase 1 started.
+- Phase 1 completed for shared client UI primitives.
 - Added shared client helpers:
   - `client/RtsClientUiUtil.java`
   - `client/RtsCraftablesUiHelper.java`
 - `BuilderScreen`, `RtsClientInputGate`, `RtsCraftTerminalScreen`,
   `RtsCraftQuantityDialog`, and `RtsCraftFeedbackPopup` now delegate repeated
   UI primitives / craft-dialog flow into shared helpers.
+- Phase 2 started.
+- Added `client/RtsClientRemoteMenuCompat.java` so `ClientRtsController`
+  no longer owns the remote-menu wrapper / reflection patch implementation.
+- Removed dead client remote-menu spoof state that was only being reset and
+  never read after the 1.0.6 no-teleport rollback.
 
 Immediate Next Slice
-- Continue Phase 1 by extracting the shared craft/storage panel widgets used
-  by both `BuilderScreen` and `RtsClientInputGate`.
+- Continue Phase 2 by extracting another self-contained `ClientRtsController`
+  slice, preferably packet gateway or storage/craftables state application.

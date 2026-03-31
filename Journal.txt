@@ -1611,6 +1611,32 @@ Compile validation
   - Ran `./gradlew.bat build`
   - Result: SUCCESS
   - Warnings only: existing `EventBusSubscriber.Bus.GAME` deprecation warnings
+
+[2026-03-31] Deshitfication phase 2 - client remote menu compat extraction
+- User request
+  - continue with the next refactor slice
+
+- Changes made
+  - `client/RtsClientRemoteMenuCompat.java`
+    - extracted client remote-menu wrapper install + validation-relax logic
+      out of `ClientRtsController`
+    - owns the reflection-based menu remap and validity patch helpers
+  - `client/ClientRtsController.java`
+    - now delegates remote-menu compat work to the new helper
+    - removed dead remote-menu spoof state left over from the earlier
+      no-teleport rollback path
+    - simplified remote-menu grace calls to a no-argument helper because the
+      target position is no longer used client-side
+  - `deshitfication_plan.txt`
+    - updated progress to mark shared client UI extraction complete and
+      remote-menu compat extraction started
+  - `detailed_project.txt`
+    - refreshed the top-level code map and change notes for the new helper
+
+- Build check
+  - Ran `./gradlew.bat build`
+  - Result: SUCCESS
+  - Warnings only: existing `EventBusSubscriber.Bus.GAME` deprecation warnings
 [2026-03-05] RTS terminal-only search/category migration pass
 - User target
   - add search box + category column directly in RTS craft terminal linked panel
