@@ -4,8 +4,10 @@ import org.slf4j.Logger;
 
 import com.mojang.logging.LogUtils;
 import com.rtsbuilding.rtsbuilding.client.RtsCameraEntityRenderer;
+import com.rtsbuilding.rtsbuilding.client.RtsModConfigScreen;
 import com.rtsbuilding.rtsbuilding.entity.RtsCameraEntity;
 import com.rtsbuilding.rtsbuilding.server.RtsCameraManager;
+import com.rtsbuilding.rtsbuilding.server.RtsProgressionManager;
 import com.rtsbuilding.rtsbuilding.server.RtsStorageManager;
 
 import net.minecraft.client.Minecraft;
@@ -33,6 +35,8 @@ import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.config.ModConfig;
 import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
 import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
+import net.neoforged.fml.loading.FMLEnvironment;
+import net.neoforged.neoforge.client.gui.IConfigScreenFactory;
 import net.neoforged.neoforge.client.event.EntityRenderersEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.BuildCreativeModeTabContentsEvent;
@@ -72,7 +76,7 @@ public class RtsbuildingMod {
             "rts_camera",
             () -> EntityType.Builder.<RtsCameraEntity>of(RtsCameraEntity::new, MobCategory.MISC)
                     .sized(0.1F, 0.1F)
-                    .clientTrackingRange(32)
+                    .clientTrackingRange(128)
                     .updateInterval(1)
                     .build(ResourceLocation.fromNamespaceAndPath(MODID, "rts_camera").toString()));
 
@@ -88,6 +92,10 @@ public class RtsbuildingMod {
         modEventBus.addListener(this::addCreative);
 
         modContainer.registerConfig(ModConfig.Type.COMMON, Config.SPEC);
+        if (FMLEnvironment.dist == Dist.CLIENT) {
+            modContainer.registerExtensionPoint(IConfigScreenFactory.class,
+                    (container, parent) -> new RtsModConfigScreen(parent));
+        }
     }
 
     private void commonSetup(FMLCommonSetupEvent event) {
@@ -129,10 +137,18 @@ public class RtsbuildingMod {
     @EventBusSubscriber(modid = RtsbuildingMod.MODID, bus = EventBusSubscriber.Bus.GAME)
     static class GameEvents {
         @SubscribeEvent
+        static void onPlayerLogin(PlayerEvent.PlayerLoggedInEvent event) {
+            if (event.getEntity() instanceof net.minecraft.server.level.ServerPlayer serverPlayer) {
+                RtsProgressionManager.onPlayerLogin(serverPlayer);
+            }
+        }
+
+        @SubscribeEvent
         static void onPlayerLogout(PlayerEvent.PlayerLoggedOutEvent event) {
             if (event.getEntity() instanceof net.minecraft.server.level.ServerPlayer serverPlayer) {
                 RtsCameraManager.stopIfActive(serverPlayer);
                 RtsStorageManager.onPlayerLogout(serverPlayer);
+                RtsProgressionManager.onPlayerLogout(serverPlayer);
             }
         }
 

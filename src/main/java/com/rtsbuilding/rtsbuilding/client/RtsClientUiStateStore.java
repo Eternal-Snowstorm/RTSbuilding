@@ -49,6 +49,7 @@ final class RtsClientUiStateStore {
         boolean ultimineOpen = false;
         int ultimineLimit = 64;
         boolean chunkCurtainVisible = false;
+        double rtsGuiScale = 2.0D;
 
         static UiState defaults() {
             return new UiState();
@@ -63,6 +64,7 @@ final class RtsClientUiStateStore {
             clean.ultimineOpen = this.ultimineOpen;
             clean.ultimineLimit = Math.max(1, Math.min(256, this.ultimineLimit));
             clean.chunkCurtainVisible = this.chunkCurtainVisible;
+            clean.rtsGuiScale = sanitizeScale(this.rtsGuiScale);
             return clean;
         }
 
@@ -71,6 +73,14 @@ final class RtsClientUiStateStore {
                 return fallback;
             }
             return value.trim().toUpperCase();
+        }
+
+        private static double sanitizeScale(double value) {
+            if (!Double.isFinite(value)) {
+                return 2.0D;
+            }
+            double snapped = Math.round(value / 0.5D) * 0.5D;
+            return Math.max(1.0D, Math.min(4.0D, snapped));
         }
     }
 }

@@ -2,6 +2,7 @@ package com.rtsbuilding.rtsbuilding.client;
 
 import java.util.ArrayList;
 import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
@@ -17,6 +18,8 @@ import com.rtsbuilding.rtsbuilding.network.C2SRtsInteractPayload;
 import com.rtsbuilding.rtsbuilding.network.C2SRtsToggleCameraPayload;
 import com.rtsbuilding.rtsbuilding.network.RtsStorageSort;
 import com.rtsbuilding.rtsbuilding.network.S2CRtsStoragePagePayload;
+import com.rtsbuilding.rtsbuilding.progression.RtsProgressionNode;
+import com.rtsbuilding.rtsbuilding.progression.RtsProgressionNodes;
 
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.EditBox;
@@ -57,14 +60,14 @@ public final class BuilderScreen extends Screen {
     private static final int TOOL_AREA_H = HOTBAR_SLOT;
     private static final int SEARCH_CLEAR_SIZE = 12;
     private static final int SORT_BUTTON_SIZE = 16;
-    private static final int CRAFT_PANEL_W = 106;
+    private static final int CRAFT_PANEL_W = 126;
     private static final int CRAFT_PANEL_GAP = 6;
     private static final int CRAFT_PANEL_COLS = 4;
     private static final int CRAFT_PANEL_SLOT = 18;
     private static final int CRAFT_PANEL_PITCH = 20;
     private static final int CRAFT_PANEL_SEARCH_H = 12;
-    private static final int CRAFT_PANEL_APPLY_W = 16;
-    private static final int CRAFT_PANEL_TOGGLE_W = 30;
+    private static final int CRAFT_PANEL_APPLY_W = 18;
+    private static final int CRAFT_PANEL_TOGGLE_W = 38;
     private static final int CRAFT_DOCK_C_SIZE = 18;
     private static final int CRAFT_DOCK_SLOT_SIZE = 10;
     private static final int CRAFT_DOCK_GAP = 2;
@@ -113,6 +116,11 @@ public final class BuilderScreen extends Screen {
     private static final int FUNNEL_BUFFER_ROW_H = 22;
     private static final int FUNNEL_BUFFER_TOGGLE_W = 60;
     private static final int FUNNEL_BUFFER_TOGGLE_H = 16;
+    private static final int GEAR_MENU_H = 204;
+    private static final double DEFAULT_RTS_GUI_SCALE = 2.0D;
+    private static final double MIN_RTS_GUI_SCALE = 1.0D;
+    private static final double MAX_RTS_GUI_SCALE = 4.0D;
+    private static final double RTS_GUI_SCALE_STEP = 0.5D;
     private static final ItemStack FUNNEL_CURSOR_STACK = new ItemStack(Items.HOPPER);
     private static final String CATEGORY_ALL = "all";
     private static final String CATEGORY_MOD_PREFIX = "mod|";
@@ -140,7 +148,10 @@ public final class BuilderScreen extends Screen {
     private double rightDragDistance = 0.0D;
     private boolean leftMiningActive = false;
     private boolean guideOpen = false;
+    private GuideContext guideContext = GuideContext.TOP;
+    private int guidePage = 0;
     private boolean gearMenuOpen = false;
+    private boolean draggingInputSensitivity = false;
     private boolean quickBuildOpen = true;
     private boolean ultimineOpen = false;
     private int ultimineLimit = 64;
@@ -162,9 +173,13 @@ public final class BuilderScreen extends Screen {
     private boolean funnelHotkeyHeld = false;
     private BuilderMode modeBeforeFunnelHotkey = BuilderMode.INTERACT;
     private boolean nativeCursorHidden = false;
+    private boolean fixedRtsScaleRenderPass = false;
+    private boolean fixedRtsScaleInputPass = false;
+    private double fixedRtsGuiScale = DEFAULT_RTS_GUI_SCALE;
     private ShapeBuildSession shapeBuildSession;
     private int shapeFootprintNudgeA = 0;
     private int shapeFootprintNudgeB = 0;
+    private double shapeCursorY = 0.0D;
     private ShapeFillMode shapeFillMode = ShapeFillMode.FILL;
     private int shapeRotateDegrees = 0;
     private boolean shapeWheelOpenedByAlt = false;
@@ -190,6 +205,38 @@ public final class BuilderScreen extends Screen {
     private static final ResourceLocation SHAPE_BOX_INACTIVE = quickBuildTexture("shape_box_inactive");
     private static final ResourceLocation SHAPE_BOX_HOVER = quickBuildTexture("shape_box_hover");
     private static final ResourceLocation SHAPE_BOX_ACTIVE = quickBuildTexture("shape_box_active");
+    private static final ResourceLocation TOPBAR_INTERACT_INACTIVE = topbarTexture("mode_interact_inactive");
+    private static final ResourceLocation TOPBAR_INTERACT_HOVER = topbarTexture("mode_interact_hover");
+    private static final ResourceLocation TOPBAR_INTERACT_ACTIVE = topbarTexture("mode_interact_active");
+    private static final ResourceLocation TOPBAR_INTERACT_PRESSED = topbarTexture("mode_interact_pressed");
+    private static final ResourceLocation TOPBAR_LINK_INACTIVE = topbarTexture("mode_link_inactive");
+    private static final ResourceLocation TOPBAR_LINK_HOVER = topbarTexture("mode_link_hover");
+    private static final ResourceLocation TOPBAR_LINK_ACTIVE = topbarTexture("mode_link_active");
+    private static final ResourceLocation TOPBAR_LINK_PRESSED = topbarTexture("mode_link_pressed");
+    private static final ResourceLocation TOPBAR_FUNNEL_INACTIVE = topbarTexture("mode_funnel_inactive");
+    private static final ResourceLocation TOPBAR_FUNNEL_HOVER = topbarTexture("mode_funnel_hover");
+    private static final ResourceLocation TOPBAR_FUNNEL_ACTIVE = topbarTexture("mode_funnel_active");
+    private static final ResourceLocation TOPBAR_FUNNEL_PRESSED = topbarTexture("mode_funnel_pressed");
+    private static final ResourceLocation TOPBAR_ROTATE_INACTIVE = topbarTexture("mode_rotate_inactive");
+    private static final ResourceLocation TOPBAR_ROTATE_HOVER = topbarTexture("mode_rotate_hover");
+    private static final ResourceLocation TOPBAR_ROTATE_ACTIVE = topbarTexture("mode_rotate_active");
+    private static final ResourceLocation TOPBAR_ROTATE_PRESSED = topbarTexture("mode_rotate_pressed");
+    private static final ResourceLocation TOPBAR_QUICK_BUILD_INACTIVE = topbarTexture("quick_build_inactive");
+    private static final ResourceLocation TOPBAR_QUICK_BUILD_HOVER = topbarTexture("quick_build_hover");
+    private static final ResourceLocation TOPBAR_QUICK_BUILD_ACTIVE = topbarTexture("quick_build_active");
+    private static final ResourceLocation TOPBAR_QUICK_BUILD_PRESSED = topbarTexture("quick_build_pressed");
+    private static final ResourceLocation TOPBAR_ULTIMINE_INACTIVE = topbarTexture("ultimine_inactive");
+    private static final ResourceLocation TOPBAR_ULTIMINE_HOVER = topbarTexture("ultimine_hover");
+    private static final ResourceLocation TOPBAR_ULTIMINE_ACTIVE = topbarTexture("ultimine_active");
+    private static final ResourceLocation TOPBAR_ULTIMINE_PRESSED = topbarTexture("ultimine_pressed");
+    private static final ResourceLocation TOPBAR_CHUNK_VIEW_INACTIVE = topbarTexture("chunk_view_inactive");
+    private static final ResourceLocation TOPBAR_CHUNK_VIEW_HOVER = topbarTexture("chunk_view_hover");
+    private static final ResourceLocation TOPBAR_CHUNK_VIEW_ACTIVE = topbarTexture("chunk_view_active");
+    private static final ResourceLocation TOPBAR_CHUNK_VIEW_PRESSED = topbarTexture("chunk_view_pressed");
+    private static final ResourceLocation TOPBAR_GEAR_INACTIVE = topbarTexture("settings_gear_inactive");
+    private static final ResourceLocation TOPBAR_GEAR_HOVER = topbarTexture("settings_gear_hover");
+    private static final ResourceLocation TOPBAR_GEAR_ACTIVE = topbarTexture("settings_gear_active");
+    private static final ResourceLocation TOPBAR_GEAR_PRESSED = topbarTexture("settings_gear_pressed");
 
     public BuilderScreen(ClientRtsController controller) {
         super(Component.literal("RTS Builder"));
@@ -285,10 +332,40 @@ public final class BuilderScreen extends Screen {
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        if (!this.fixedRtsScaleInputPass) {
+            RtsUiScaleFrame frame = enterFixedRtsGuiScale();
+            if (frame != null && Math.abs(frame.scale() - 1.0D) >= 0.001D) {
+                this.fixedRtsScaleInputPass = true;
+                try {
+                    return mouseClicked(mouseX / frame.scale(), mouseY / frame.scale(), button);
+                } finally {
+                    this.fixedRtsScaleInputPass = false;
+                    frame.close();
+                }
+            }
+            if (frame != null) {
+                frame.close();
+            }
+        }
         if (this.craftQuantityDialog.isOpen()) {
             boolean handled = this.craftQuantityDialog.mouseClicked(mouseX, mouseY, button, this.width, this.height);
             submitCraftQuantityDialogIfReady();
             return handled;
+        }
+
+        if (this.controller.isHomeSelectionMode()) {
+            if (button == GLFW.GLFW_MOUSE_BUTTON_LEFT && isWorldArea(mouseX, mouseY)) {
+                BlockHitResult hit = pickBlockHit();
+                if (hit != null) {
+                    this.controller.setHome(hit.getBlockPos());
+                }
+                return true;
+            }
+            if (button == GLFW.GLFW_MOUSE_BUTTON_RIGHT || button == GLFW.GLFW_MOUSE_BUTTON_MIDDLE) {
+                PacketDistributor.sendToServer(new C2SRtsToggleCameraPayload());
+                return true;
+            }
+            return true;
         }
 
         if (this.shapeWheelOpen) {
@@ -328,6 +405,19 @@ public final class BuilderScreen extends Screen {
 
         if (this.guideOpen) {
             if (button == GLFW.GLFW_MOUSE_BUTTON_LEFT) {
+                int topic = resolveGuideTopicClick(mouseX, mouseY);
+                if (topic >= 0) {
+                    this.guidePage = topic;
+                    return true;
+                }
+                if (isInsideGuidePrev(mouseX, mouseY)) {
+                    this.guidePage = Math.max(0, this.guidePage - 1);
+                    return true;
+                }
+                if (isInsideGuideNext(mouseX, mouseY)) {
+                    this.guidePage = Math.min(getGuidePageCount() - 1, this.guidePage + 1);
+                    return true;
+                }
                 if (!isInsideGuidePanel(mouseX, mouseY) || isInsideGuideClose(mouseX, mouseY)) {
                     this.guideOpen = false;
                 }
@@ -443,7 +533,27 @@ public final class BuilderScreen extends Screen {
 
     @Override
     public boolean mouseReleased(double mouseX, double mouseY, int button) {
+        if (!this.fixedRtsScaleInputPass) {
+            RtsUiScaleFrame frame = enterFixedRtsGuiScale();
+            if (frame != null && Math.abs(frame.scale() - 1.0D) >= 0.001D) {
+                this.fixedRtsScaleInputPass = true;
+                try {
+                    return mouseReleased(mouseX / frame.scale(), mouseY / frame.scale(), button);
+                } finally {
+                    this.fixedRtsScaleInputPass = false;
+                    frame.close();
+                }
+            }
+            if (frame != null) {
+                frame.close();
+            }
+        }
         if (this.craftQuantityDialog.isOpen()) {
+            return true;
+        }
+
+        if (this.draggingInputSensitivity) {
+            this.draggingInputSensitivity = false;
             return true;
         }
 
@@ -599,7 +709,27 @@ public final class BuilderScreen extends Screen {
 
     @Override
     public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
+        if (!this.fixedRtsScaleInputPass) {
+            RtsUiScaleFrame frame = enterFixedRtsGuiScale();
+            if (frame != null && Math.abs(frame.scale() - 1.0D) >= 0.001D) {
+                this.fixedRtsScaleInputPass = true;
+                try {
+                    return mouseDragged(mouseX / frame.scale(), mouseY / frame.scale(), button, dragX / frame.scale(), dragY / frame.scale());
+                } finally {
+                    this.fixedRtsScaleInputPass = false;
+                    frame.close();
+                }
+            }
+            if (frame != null) {
+                frame.close();
+            }
+        }
         if (this.craftQuantityDialog.isOpen()) {
+            return true;
+        }
+
+        if (this.draggingInputSensitivity) {
+            updateInputSensitivityFromMouse(mouseX);
             return true;
         }
 
@@ -638,6 +768,21 @@ public final class BuilderScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
+        if (!this.fixedRtsScaleInputPass) {
+            RtsUiScaleFrame frame = enterFixedRtsGuiScale();
+            if (frame != null && Math.abs(frame.scale() - 1.0D) >= 0.001D) {
+                this.fixedRtsScaleInputPass = true;
+                try {
+                    return mouseScrolled(mouseX / frame.scale(), mouseY / frame.scale(), scrollX, scrollY);
+                } finally {
+                    this.fixedRtsScaleInputPass = false;
+                    frame.close();
+                }
+            }
+            if (frame != null) {
+                frame.close();
+            }
+        }
         if (this.craftQuantityDialog.isOpen()) {
             return this.craftQuantityDialog.mouseScrolled(scrollY);
         }
@@ -706,6 +851,13 @@ public final class BuilderScreen extends Screen {
             boolean handled = this.craftQuantityDialog.keyPressed(keyCode, scanCode, modifiers);
             submitCraftQuantityDialogIfReady();
             return handled;
+        }
+
+        if (this.controller.isHomeSelectionMode()) {
+            if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
+                PacketDistributor.sendToServer(new C2SRtsToggleCameraPayload());
+            }
+            return true;
         }
 
         if (this.shapeWheelOpen) {
@@ -788,6 +940,13 @@ public final class BuilderScreen extends Screen {
             return true;
         }
 
+        if (this.gearMenuOpen) {
+            if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
+                this.gearMenuOpen = false;
+                return true;
+            }
+        }
+
         if (this.pendingGuiBindSlot >= 0 && keyCode == GLFW.GLFW_KEY_ESCAPE) {
             this.pendingGuiBindSlot = -1;
             return true;
@@ -822,7 +981,17 @@ public final class BuilderScreen extends Screen {
             return true;
         }
         if (!isSearchFocused() && keyCode == GLFW.GLFW_KEY_R && !hasControlDown()) {
+            if (hasRecipeViewerLoaded()) {
+                return super.keyPressed(keyCode, scanCode, modifiers);
+            }
             rotateShapeByStep(hasShiftDown() ? -1 : 1);
+            return true;
+        }
+        if (!isSearchFocused()
+                && keyCode == GLFW.GLFW_KEY_C
+                && !hasControlDown()
+                && hasProgressionNode(RtsProgressionNodes.CRAFT_TERMINAL)) {
+            this.controller.openCraftTerminal();
             return true;
         }
 
@@ -923,6 +1092,10 @@ public final class BuilderScreen extends Screen {
 
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
+        if (!this.fixedRtsScaleRenderPass && renderWithFixedRtsGuiScale(guiGraphics, mouseX, mouseY, partialTick)) {
+            return;
+        }
+        this.shapeCursorY = mouseY;
         this.hoveredEntry = -1;
         this.hoveredRecentEntry = -1;
         this.hoveredFluidEntry = -1;
@@ -934,6 +1107,11 @@ public final class BuilderScreen extends Screen {
         this.hoveredPinPageButton = false;
 
         guiGraphics.fill(0, 0, this.width, TOP_H, 0xC0101116);
+
+        if (this.controller.isHomeSelectionMode()) {
+            renderHomeSelectionOverlay(guiGraphics, mouseX, mouseY);
+            return;
+        }
 
         renderTopBar(guiGraphics, mouseX, mouseY);
         renderBottomPanel(guiGraphics, mouseX, mouseY, partialTick);
@@ -983,7 +1161,7 @@ public final class BuilderScreen extends Screen {
                 var entry = this.controller.getCraftableEntries().get(this.hoveredCraftableEntry);
                 guiGraphics.renderTooltip(this.font, entry.stack(), mouseX, mouseY);
                 String detail = entry.craftable()
-                        ? "Right click: choose recipe/count"
+                        ? text("screen.rtsbuilding.tooltip.craft_choose")
                         : entry.missingSummary();
                 if (detail != null && !detail.isBlank()) {
                     guiGraphics.drawString(this.font, detail, mouseX + 10, mouseY + 18, entry.craftable() ? 0xFFAEE8AE : 0xFFFFB0B0);
@@ -993,21 +1171,21 @@ public final class BuilderScreen extends Screen {
             if (this.hoveredFunnelBufferEntry >= 0 && this.hoveredFunnelBufferEntry < this.controller.getFunnelBufferEntries().size()) {
                 var entry = this.controller.getFunnelBufferEntries().get(this.hoveredFunnelBufferEntry);
                 guiGraphics.renderTooltip(this.font, entry.stack(), mouseX, mouseY);
-                guiGraphics.drawString(this.font, "Buffered x" + entry.count(), mouseX + 10, mouseY + 18, 0xFFD8B8);
+                guiGraphics.drawString(this.font, text("screen.rtsbuilding.tooltip.buffered", entry.count()), mouseX + 10, mouseY + 18, 0xFFD8B8);
             }
 
             if (this.hoveredGuiBindingSlot >= 0 && this.hoveredGuiBindingSlot < this.controller.getGuiBindingCount()) {
                 String detail = this.controller.hasGuiBinding(this.hoveredGuiBindingSlot)
                         ? this.controller.getGuiBindingLabel(this.hoveredGuiBindingSlot)
-                        : "Empty GUI slot";
+                        : text("screen.rtsbuilding.tooltip.gui_empty");
                 guiGraphics.renderTooltip(this.font, Component.literal(detail), mouseX, mouseY);
                 guiGraphics.drawString(
                         this.font,
                         this.pendingGuiBindSlot == this.hoveredGuiBindingSlot
-                                ? "Left: cancel  Click machine: bind"
+                                ? text("screen.rtsbuilding.tooltip.gui_cancel_bind")
                                 : (this.controller.hasGuiBinding(this.hoveredGuiBindingSlot)
-                                        ? "Left: open  Right: rebind  Shift+Right: clear"
-                                        : "Left/Right: bind next clicked GUI block"),
+                                        ? text("screen.rtsbuilding.tooltip.gui_bound")
+                                        : text("screen.rtsbuilding.tooltip.gui_unbound")),
                         mouseX + 10,
                         mouseY + 18,
                         0xFFCFE3F7);
@@ -1049,6 +1227,65 @@ public final class BuilderScreen extends Screen {
         renderCraftFeedback(guiGraphics);
     }
 
+    private boolean renderWithFixedRtsGuiScale(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
+        RtsUiScaleFrame frame = enterFixedRtsGuiScale();
+        if (frame == null || Math.abs(frame.scale() - 1.0D) < 0.001D) {
+            if (frame != null) {
+                frame.close();
+            }
+            return false;
+        }
+        this.fixedRtsScaleRenderPass = true;
+        g.pose().pushPose();
+        g.pose().scale((float) frame.scale(), (float) frame.scale(), 1.0F);
+        try {
+            render(g, (int) Math.round(mouseX / frame.scale()), (int) Math.round(mouseY / frame.scale()), partialTick);
+        } finally {
+            g.pose().popPose();
+            this.fixedRtsScaleRenderPass = false;
+            frame.close();
+        }
+        return true;
+    }
+
+    private RtsUiScaleFrame enterFixedRtsGuiScale() {
+        if (this.minecraft == null || this.minecraft.getWindow() == null || this.width <= 0 || this.height <= 0) {
+            return null;
+        }
+        double currentScale = this.minecraft.getWindow().getScreenWidth() / (double) Math.max(1, this.width);
+        if (currentScale <= 0.0D || !Double.isFinite(currentScale)) {
+            return null;
+        }
+        double renderScale = sanitizeRtsGuiScale(this.fixedRtsGuiScale) / currentScale;
+        if (renderScale <= 0.0D || !Double.isFinite(renderScale)) {
+            return null;
+        }
+        int oldW = this.width;
+        int oldH = this.height;
+        int virtualW = Math.max(1, (int) Math.round(oldW / renderScale));
+        int virtualH = Math.max(1, (int) Math.round(oldH / renderScale));
+        this.width = virtualW;
+        this.height = virtualH;
+        return new RtsUiScaleFrame(this, oldW, oldH, renderScale);
+    }
+
+    private void renderHomeSelectionOverlay(GuiGraphics g, int mouseX, int mouseY) {
+        updateNativeCursorVisibility(false);
+        int panelW = Math.min(360, this.width - 24);
+        int panelX = (this.width - panelW) / 2;
+        int panelY = 12;
+        drawPanelFrame(g, panelX, panelY, panelW, 54, 0xCC101820, 0xFF6E8799, 0xFF0D1218);
+        g.drawCenteredString(this.font, Component.translatable("screen.rtsbuilding.home_select.title"), panelX + panelW / 2, panelY + 8, 0xFFFFFF);
+        g.drawCenteredString(this.font, Component.translatable("screen.rtsbuilding.home_select.area"), panelX + panelW / 2, panelY + 22, 0xD8E6F5);
+        g.drawCenteredString(this.font, Component.translatable("screen.rtsbuilding.home_select.confirm"), panelX + panelW / 2, panelY + 34, 0xBFD2E6);
+
+        BlockHitResult hit = isWorldArea(mouseX, mouseY) ? pickBlockHit() : null;
+        if (hit != null) {
+            BlockPos pos = hit.getBlockPos();
+            g.drawCenteredString(this.font, Component.translatable("screen.rtsbuilding.home_select.target", pos.getX(), pos.getY(), pos.getZ()), this.width / 2, panelY + 68, 0xFFE7C46A);
+        }
+    }
+
     private void renderTopBar(GuiGraphics g, int mouseX, int mouseY) {
         ensureFillModeForShape(this.controller.getBuildShape());
         for (TopBarButtonLayout button : buildTopBarButtonLayouts()) {
@@ -1056,37 +1293,37 @@ public final class BuilderScreen extends Screen {
         }
 
         String modeText = switch (this.controller.getMode()) {
-            case INTERACT -> "Mode: Interact";
-            case LINK_STORAGE -> "Mode: Link Storage";
-            case FUNNEL -> "Mode: Funnel";
-            case SELECT_PAN -> "Mode: Camera";
-            case ROTATE -> "Mode: Rotate";
-            default -> "Mode: Idle";
+            case INTERACT -> text("screen.rtsbuilding.status.mode", text("screen.rtsbuilding.mode.interact"));
+            case LINK_STORAGE -> text("screen.rtsbuilding.status.mode", text("screen.rtsbuilding.mode.link_storage"));
+            case FUNNEL -> text("screen.rtsbuilding.status.mode", text("screen.rtsbuilding.mode.funnel"));
+            case SELECT_PAN -> text("screen.rtsbuilding.status.mode", text("screen.rtsbuilding.mode.camera"));
+            case ROTATE -> text("screen.rtsbuilding.status.mode", text("screen.rtsbuilding.mode.rotate"));
+            default -> text("screen.rtsbuilding.status.mode", text("screen.rtsbuilding.mode.idle"));
         };
 
         String linked = this.controller.isStorageLinked()
-                ? "Linked Storage: " + this.controller.getLinkedStorageName()
-                : "Linked Storage: Not linked";
+                ? text("screen.rtsbuilding.status.storage_linked", this.controller.getLinkedStorageName())
+                : text("screen.rtsbuilding.status.storage_not_linked");
         String selected;
         if (this.controller.hasSelectedFluid()) {
-            selected = "Selected Fluid: " + this.controller.getSelectedFluidLabel();
+            selected = text("screen.rtsbuilding.status.selected_fluid", this.controller.getSelectedFluidLabel());
         } else if (!this.controller.getSelectedItemLabel().isEmpty()) {
-            selected = "Selected Placement Item: " + this.controller.getSelectedItemLabel();
+            selected = text("screen.rtsbuilding.status.selected_item", selectedItemStatusLabel());
         } else {
-            selected = "Selected Placement Item: None";
+            selected = text("screen.rtsbuilding.status.selected_none");
         }
         String row1 = modeText + "    " + selected;
         String row2 = linked + (this.controller.isAutoStoreMinedDrops()
-                ? "    Mined drops are auto-stored"
-                : "    Mined drops are not auto-stored")
-                + (this.controller.isFunnelEnabled() ? "    Funnel: ON" : "    Funnel: OFF")
-                + "    Shape: " + shapeLabel(this.controller.getBuildShape())
-                + (this.ultimineOpen ? "    Ultimine: " + this.ultimineLimit : "")
-                + "    Fill: " + fillModeLabel(this.shapeFillMode)
-                + "    Rot: " + this.shapeRotateDegrees + "deg"
-                + "    Undo/Redo: " + this.shapeUndoStack.size() + "/" + this.shapeRedoStack.size()
+                ? "    " + text("screen.rtsbuilding.status.auto_store_on")
+                : "    " + text("screen.rtsbuilding.status.auto_store_off"))
+                + (hasProgressionNode(RtsProgressionNodes.FUNNEL) ? "    " + text("screen.rtsbuilding.status.funnel", text(this.controller.isFunnelEnabled() ? "gui.rtsbuilding.on" : "gui.rtsbuilding.off")) : "")
+                + (hasProgressionNode(RtsProgressionNodes.REMOTE_PLACE) ? "    " + text("screen.rtsbuilding.status.shape", shapeLabel(this.controller.getBuildShape())) : "")
+                + (hasProgressionNode(RtsProgressionNodes.ULTIMINE) && this.ultimineOpen ? "    " + text("screen.rtsbuilding.status.ultimine", this.ultimineLimit) : "")
+                + "    " + text("screen.rtsbuilding.status.fill", fillModeLabel(this.shapeFillMode))
+                + "    " + text("screen.rtsbuilding.status.rotation", this.shapeRotateDegrees)
+                + "    " + text("screen.rtsbuilding.status.undo_redo", this.shapeUndoStack.size(), this.shapeRedoStack.size())
                 + "    " + pendingShapeStatusText()
-                + (this.pendingGuiBindSlot >= 0 ? "    GUI Bind: Slot " + (this.pendingGuiBindSlot + 1) + " armed" : "");
+                + (this.pendingGuiBindSlot >= 0 ? "    " + text("screen.rtsbuilding.status.gui_bind_armed", this.pendingGuiBindSlot + 1) : "");
 
         int statusX = 8;
         int statusW = Math.max(40, this.width - 16);
@@ -1097,11 +1334,16 @@ public final class BuilderScreen extends Screen {
 
     private void drawCraftDock(GuiGraphics g, int mouseX, int mouseY, int x, int y) {
         CraftDockLayout dock = resolveCraftDockLayout(x, y);
-        boolean craftHovered = inside(mouseX, mouseY, dock.cX(), dock.cY(), CRAFT_DOCK_C_SIZE, CRAFT_DOCK_C_SIZE);
-        int craftFill = craftHovered ? 0xCC385465 : 0xAA24303A;
-        drawPanelFrame(g, dock.cX(), dock.cY(), CRAFT_DOCK_C_SIZE, CRAFT_DOCK_C_SIZE, craftFill, 0xFF6E8799, 0xFF111821);
-        g.drawCenteredString(this.font, "C", dock.cX() + CRAFT_DOCK_C_SIZE / 2, dock.cY() + 5, 0xFFFFFF);
+        if (hasProgressionNode(RtsProgressionNodes.CRAFT_TERMINAL)) {
+            boolean craftHovered = inside(mouseX, mouseY, dock.cX(), dock.cY(), CRAFT_DOCK_C_SIZE, CRAFT_DOCK_C_SIZE);
+            int craftFill = craftHovered ? 0xCC385465 : 0xAA24303A;
+            drawPanelFrame(g, dock.cX(), dock.cY(), CRAFT_DOCK_C_SIZE, CRAFT_DOCK_C_SIZE, craftFill, 0xFF6E8799, 0xFF111821);
+            g.drawCenteredString(this.font, "C", dock.cX() + CRAFT_DOCK_C_SIZE / 2, dock.cY() + 5, 0xFFFFFF);
+        }
 
+        if (!hasProgressionNode(RtsProgressionNodes.REMOTE_GUI)) {
+            return;
+        }
         for (int slot = 0; slot < this.controller.getGuiBindingCount(); slot++) {
             int slotX = dock.slotX(slot);
             int slotY = dock.slotY(slot);
@@ -1146,11 +1388,15 @@ public final class BuilderScreen extends Screen {
 
     private boolean handleCraftDockClick(double mouseX, double mouseY, int button, int x, int y) {
         CraftDockLayout dock = resolveCraftDockLayout(x, y);
-        if (inside(mouseX, mouseY, dock.cX(), dock.cY(), CRAFT_DOCK_C_SIZE, CRAFT_DOCK_C_SIZE)) {
+        if (hasProgressionNode(RtsProgressionNodes.CRAFT_TERMINAL)
+                && inside(mouseX, mouseY, dock.cX(), dock.cY(), CRAFT_DOCK_C_SIZE, CRAFT_DOCK_C_SIZE)) {
             this.controller.openCraftTerminal();
             return true;
         }
 
+        if (!hasProgressionNode(RtsProgressionNodes.REMOTE_GUI)) {
+            return false;
+        }
         for (int slot = 0; slot < this.controller.getGuiBindingCount(); slot++) {
             int slotX = dock.slotX(slot);
             int slotY = dock.slotY(slot);
@@ -1288,6 +1534,12 @@ public final class BuilderScreen extends Screen {
             icon = 0xFFD9E3EF;
         }
 
+        ResourceLocation textureIcon = topbarModeTexture(button.id(), button.active(), hovered, pressed);
+        if (textureIcon != null) {
+            g.blit(textureIcon, x + (w - TOP_BUTTON_H) / 2, y, 0, 0, TOP_BUTTON_H, TOP_BUTTON_H, TOP_BUTTON_H, TOP_BUTTON_H);
+            return;
+        }
+
         g.fill(x, y, x + w, y + h, bg);
         g.hLine(x, x + w, y, light);
         g.hLine(x, x + w, y + h, dark);
@@ -1305,11 +1557,69 @@ public final class BuilderScreen extends Screen {
             case LINK -> drawLinkModeIcon(g, cx, cy, icon, button.active());
             case FUNNEL -> drawFunnelModeIcon(g, cx, cy, icon, button.active());
             case ROTATE -> drawRotateModeIcon(g, cx, cy, icon);
+            case QUICK_BUILD -> drawQuickBuildIcon(g, cx, cy, icon, button.active());
+            case ULTIMINE -> drawUltimineIcon(g, cx, cy, icon, button.active());
             case QUEST_DETECT -> drawQuestCheckIcon(g, cx, cy, icon);
             case CHUNK_VIEW -> drawChunkCurtainIcon(g, cx, cy, icon, button.active());
             case GEAR -> drawGearIcon(g, cx, cy, icon);
+            case GUIDE -> g.drawCenteredString(this.font, "i", cx, y + 7, icon);
             default -> g.drawCenteredString(this.font, "?", cx, y + 6, icon);
         }
+    }
+
+    private ResourceLocation topbarModeTexture(TopBarButtonId id, boolean active, boolean hovered, boolean pressed) {
+        String state = active ? "active" : pressed ? "pressed" : hovered ? "hover" : "inactive";
+        return switch (id) {
+            case INTERACT -> switch (state) {
+                case "active" -> TOPBAR_INTERACT_ACTIVE;
+                case "pressed" -> TOPBAR_INTERACT_PRESSED;
+                case "hover" -> TOPBAR_INTERACT_HOVER;
+                default -> TOPBAR_INTERACT_INACTIVE;
+            };
+            case LINK -> switch (state) {
+                case "active" -> TOPBAR_LINK_ACTIVE;
+                case "pressed" -> TOPBAR_LINK_PRESSED;
+                case "hover" -> TOPBAR_LINK_HOVER;
+                default -> TOPBAR_LINK_INACTIVE;
+            };
+            case FUNNEL -> switch (state) {
+                case "active" -> TOPBAR_FUNNEL_ACTIVE;
+                case "pressed" -> TOPBAR_FUNNEL_PRESSED;
+                case "hover" -> TOPBAR_FUNNEL_HOVER;
+                default -> TOPBAR_FUNNEL_INACTIVE;
+            };
+            case ROTATE -> switch (state) {
+                case "active" -> TOPBAR_ROTATE_ACTIVE;
+                case "pressed" -> TOPBAR_ROTATE_PRESSED;
+                case "hover" -> TOPBAR_ROTATE_HOVER;
+                default -> TOPBAR_ROTATE_INACTIVE;
+            };
+            case QUICK_BUILD -> switch (state) {
+                case "active" -> TOPBAR_QUICK_BUILD_ACTIVE;
+                case "pressed" -> TOPBAR_QUICK_BUILD_PRESSED;
+                case "hover" -> TOPBAR_QUICK_BUILD_HOVER;
+                default -> TOPBAR_QUICK_BUILD_INACTIVE;
+            };
+            case ULTIMINE -> switch (state) {
+                case "active" -> TOPBAR_ULTIMINE_ACTIVE;
+                case "pressed" -> TOPBAR_ULTIMINE_PRESSED;
+                case "hover" -> TOPBAR_ULTIMINE_HOVER;
+                default -> TOPBAR_ULTIMINE_INACTIVE;
+            };
+            case CHUNK_VIEW -> switch (state) {
+                case "active" -> TOPBAR_CHUNK_VIEW_ACTIVE;
+                case "pressed" -> TOPBAR_CHUNK_VIEW_PRESSED;
+                case "hover" -> TOPBAR_CHUNK_VIEW_HOVER;
+                default -> TOPBAR_CHUNK_VIEW_INACTIVE;
+            };
+            case GEAR -> switch (state) {
+                case "active" -> TOPBAR_GEAR_ACTIVE;
+                case "pressed" -> TOPBAR_GEAR_PRESSED;
+                case "hover" -> TOPBAR_GEAR_HOVER;
+                default -> TOPBAR_GEAR_INACTIVE;
+            };
+            default -> null;
+        };
     }
 
     private boolean isPrimaryMouseDown() {
@@ -1319,51 +1629,83 @@ public final class BuilderScreen extends Screen {
     }
 
     private void drawInteractModeIcon(GuiGraphics g, int cx, int cy, int color) {
-        int baseX = cx - 5;
-        int baseY = cy - 7;
-        g.fill(baseX, baseY, baseX + 1, baseY + 14, color);
-        g.fill(baseX, baseY, baseX + 11, baseY + 1, color);
-        g.fill(baseX + 1, baseY + 1, baseX + 10, baseY + 9, color);
-        g.fill(baseX + 3, baseY + 9, baseX + 8, baseY + 15, color);
-        g.fill(baseX + 7, baseY + 6, baseX + 13, baseY + 7, color);
-        g.fill(baseX + 7, baseY + 7, baseX + 8, baseY + 8, color);
+        g.fill(cx - 7, cy - 8, cx - 5, cy + 7, color);
+        g.fill(cx - 5, cy - 6, cx - 3, cy + 5, color);
+        g.fill(cx - 3, cy - 4, cx - 1, cy + 3, color);
+        g.fill(cx - 1, cy - 2, cx + 2, cy + 2, color);
+        g.fill(cx + 2, cy, cx + 5, cy + 3, color);
+        g.fill(cx - 2, cy + 3, cx + 1, cy + 8, color);
+        g.fill(cx + 1, cy + 6, cx + 4, cy + 8, color);
+        g.fill(cx + 4, cy - 7, cx + 7, cy - 4, 0x6688BEF4);
+        g.fill(cx + 5, cy - 6, cx + 6, cy - 5, color);
     }
 
     private void drawLinkModeIcon(GuiGraphics g, int cx, int cy, int color, boolean active) {
-        int accentA = active ? 0xFF88BEF4 : color;
-        int accentB = active ? 0xFF78B28C : color;
-        int accentC = active ? 0xFFFFC472 : color;
-        int accentD = active ? 0xFFD17474 : color;
-        g.fill(cx - 7, cy - 6, cx - 3, cy - 2, accentA);
-        g.fill(cx + 3, cy + 2, cx + 7, cy + 6, accentB);
-        g.fill(cx + 3, cy - 6, cx + 6, cy - 3, accentC);
-        g.fill(cx - 6, cy + 3, cx - 3, cy + 6, accentD);
-        g.fill(cx - 2, cy - 5, cx + 3, cy - 4, color);
-        g.fill(cx + 4, cy - 2, cx + 5, cy + 3, color);
-        g.fill(cx - 2, cy - 2, cx + 3, cy + 3, color);
-        g.fill(cx - 1, cy - 1, cx + 2, cy + 2, color);
+        int left = active ? 0xFF88BEF4 : color;
+        int right = active ? 0xFF78B28C : color;
+        drawMiniChainLoop(g, cx - 5, cy + 1, left);
+        drawMiniChainLoop(g, cx + 5, cy - 1, right);
+        g.fill(cx - 3, cy - 1, cx + 4, cy + 1, color);
+        g.fill(cx - 2, cy, cx + 3, cy + 2, color);
     }
 
     private void drawFunnelModeIcon(GuiGraphics g, int cx, int cy, int color, boolean active) {
         int top = active ? 0xFFFFC472 : color;
         int mid = active ? 0xFF78B28C : color;
-        int low = active ? 0xFF2D6B47 : color;
         int tip = active ? 0xFF88BEF4 : color;
-        g.fill(cx - 8, cy - 6, cx + 8, cy - 4, top);
-        g.fill(cx - 6, cy - 4, cx + 6, cy - 2, top);
-        g.fill(cx - 4, cy - 2, cx + 4, cy, mid);
-        g.fill(cx - 3, cy, cx + 3, cy + 2, low);
-        g.fill(cx - 1, cy + 2, cx + 1, cy + 8, tip);
+        g.fill(cx - 8, cy - 7, cx + 8, cy - 5, top);
+        g.fill(cx - 7, cy - 5, cx + 7, cy - 3, top);
+        g.fill(cx - 5, cy - 3, cx + 5, cy - 1, mid);
+        g.fill(cx - 3, cy - 1, cx + 3, cy + 1, mid);
+        g.fill(cx - 1, cy + 1, cx + 1, cy + 7, tip);
+        g.fill(cx + 1, cy + 5, cx + 4, cy + 7, tip);
     }
 
     private void drawRotateModeIcon(GuiGraphics g, int cx, int cy, int color) {
-        g.fill(cx - 6, cy - 4, cx - 2, cy - 3, color);
-        g.fill(cx - 6, cy - 4, cx - 5, cy + 1, color);
-        g.fill(cx - 1, cy - 6, cx + 4, cy - 2, color);
-        g.fill(cx + 4, cy + 2, cx + 5, cy + 7, color);
-        g.fill(cx - 4, cy + 4, cx + 1, cy + 5, color);
-        g.fill(cx - 6, cy + 2, cx - 2, cy + 6, color);
-        g.fill(cx - 1, cy - 1, cx + 2, cy + 2, 0xFF1B222C);
+        g.fill(cx - 5, cy - 7, cx + 5, cy - 5, color);
+        g.fill(cx + 4, cy - 6, cx + 7, cy - 2, color);
+        g.fill(cx + 6, cy - 2, cx + 8, cy + 1, color);
+        g.fill(cx + 3, cy - 8, cx + 8, cy - 5, color);
+        g.fill(cx + 5, cy - 4, cx + 8, cy - 1, color);
+        g.fill(cx - 8, cy - 1, cx - 6, cy + 3, color);
+        g.fill(cx - 7, cy + 3, cx - 4, cy + 6, color);
+        g.fill(cx - 5, cy + 5, cx + 5, cy + 7, color);
+        g.fill(cx - 8, cy + 4, cx - 3, cy + 7, color);
+        g.fill(cx - 8, cy + 1, cx - 5, cy + 4, color);
+        g.fill(cx - 3, cy - 3, cx + 4, cy + 4, 0xFF1B222C);
+        g.hLine(cx - 3, cx + 3, cy - 3, color);
+        g.hLine(cx - 3, cx + 3, cy + 3, color);
+        g.vLine(cx - 3, cy - 3, cy + 3, color);
+        g.vLine(cx + 3, cy - 3, cy + 3, color);
+    }
+
+    private void drawQuickBuildIcon(GuiGraphics g, int cx, int cy, int color, boolean active) {
+        int accent = active ? 0xFFFFC96B : color;
+        g.fill(cx - 8, cy - 6, cx + 6, cy - 4, accent);
+        g.fill(cx - 8, cy - 6, cx - 6, cy + 6, accent);
+        g.fill(cx - 8, cy + 4, cx + 6, cy + 6, accent);
+        g.fill(cx + 4, cy - 6, cx + 6, cy + 6, accent);
+        g.fill(cx - 4, cy - 2, cx + 2, cy + 2, 0xFF1B222C);
+        g.fill(cx + 3, cy - 9, cx + 8, cy - 4, color);
+        g.fill(cx + 5, cy - 7, cx + 10, cy - 2, color);
+    }
+
+    private void drawUltimineIcon(GuiGraphics g, int cx, int cy, int color, boolean active) {
+        int head = active ? 0xFF78B28C : color;
+        g.fill(cx - 8, cy - 7, cx - 1, cy - 5, head);
+        g.fill(cx - 6, cy - 5, cx + 1, cy - 3, head);
+        g.fill(cx + 1, cy - 3, cx + 3, cy - 1, color);
+        g.fill(cx + 2, cy - 1, cx + 5, cy + 7, color);
+        g.fill(cx + 5, cy - 8, cx + 7, cy - 3, 0xFFFFC96B);
+        g.fill(cx + 3, cy - 6, cx + 9, cy - 5, 0xFFFFC96B);
+    }
+
+    private void drawMiniChainLoop(GuiGraphics g, int cx, int cy, int color) {
+        g.fill(cx - 5, cy - 4, cx + 5, cy - 2, color);
+        g.fill(cx - 5, cy + 2, cx + 5, cy + 4, color);
+        g.fill(cx - 5, cy - 3, cx - 3, cy + 3, color);
+        g.fill(cx + 3, cy - 3, cx + 5, cy + 3, color);
+        g.fill(cx - 1, cy - 2, cx + 2, cy + 2, 0xFF1B222C);
     }
 
     private void drawQuestCheckIcon(GuiGraphics g, int cx, int cy, int color) {
@@ -1403,26 +1745,64 @@ public final class BuilderScreen extends Screen {
         int x = 8;
         layouts.add(new TopBarButtonLayout(TopBarButtonId.INTERACT, x, TOP_MODE_BUTTON_W, "", true, topActionForMode() == TopAction.INTERACT));
         x += TOP_MODE_BUTTON_W + TOP_BUTTON_GAP;
-        layouts.add(new TopBarButtonLayout(TopBarButtonId.LINK, x, TOP_MODE_BUTTON_W, "", true, topActionForMode() == TopAction.LINK));
-        x += TOP_MODE_BUTTON_W + TOP_BUTTON_GAP;
-        layouts.add(new TopBarButtonLayout(TopBarButtonId.FUNNEL, x, TOP_MODE_BUTTON_W, "", true, topActionForMode() == TopAction.FUNNEL));
-        x += TOP_MODE_BUTTON_W + TOP_BUTTON_GAP;
-        layouts.add(new TopBarButtonLayout(TopBarButtonId.ROTATE, x, TOP_MODE_BUTTON_W, "", true, topActionForMode() == TopAction.ROTATE));
-        x += TOP_MODE_BUTTON_W + 12;
-        layouts.add(new TopBarButtonLayout(TopBarButtonId.QUICK_BUILD, x, TOP_QUICK_BUILD_BUTTON_W, "Quick Build", false, this.quickBuildOpen));
-        x += TOP_QUICK_BUILD_BUTTON_W + TOP_BUTTON_GAP;
-        layouts.add(new TopBarButtonLayout(TopBarButtonId.ULTIMINE, x, TOP_ULTIMINE_BUTTON_W, "Ultimine", false, this.ultimineOpen));
-        x += TOP_ULTIMINE_BUTTON_W + TOP_BUTTON_GAP;
-        layouts.add(new TopBarButtonLayout(TopBarButtonId.QUEST_DETECT, x, TOP_ICON_BUTTON_W, "", true, false));
-        x += TOP_ICON_BUTTON_W + TOP_BUTTON_GAP;
+        if (hasProgressionNode(RtsProgressionNodes.STORAGE_LINK)) {
+            layouts.add(new TopBarButtonLayout(TopBarButtonId.LINK, x, TOP_MODE_BUTTON_W, "", true, topActionForMode() == TopAction.LINK));
+            x += TOP_MODE_BUTTON_W + TOP_BUTTON_GAP;
+        }
+        if (hasProgressionNode(RtsProgressionNodes.FUNNEL)) {
+            layouts.add(new TopBarButtonLayout(TopBarButtonId.FUNNEL, x, TOP_MODE_BUTTON_W, "", true, topActionForMode() == TopAction.FUNNEL));
+            x += TOP_MODE_BUTTON_W + TOP_BUTTON_GAP;
+        }
+        if (hasProgressionNode(RtsProgressionNodes.ROTATE_BLOCK)) {
+            layouts.add(new TopBarButtonLayout(TopBarButtonId.ROTATE, x, TOP_MODE_BUTTON_W, "", true, topActionForMode() == TopAction.ROTATE));
+            x += TOP_MODE_BUTTON_W + TOP_BUTTON_GAP;
+        }
+        x += 8;
+        if (hasProgressionNode(RtsProgressionNodes.REMOTE_PLACE)) {
+            layouts.add(new TopBarButtonLayout(TopBarButtonId.QUICK_BUILD, x, TOP_ICON_BUTTON_W, "", true, this.quickBuildOpen));
+            x += TOP_ICON_BUTTON_W + TOP_BUTTON_GAP;
+        }
+        if (hasProgressionNode(RtsProgressionNodes.ULTIMINE)) {
+            layouts.add(new TopBarButtonLayout(TopBarButtonId.ULTIMINE, x, TOP_ICON_BUTTON_W, "", true, this.ultimineOpen));
+            x += TOP_ICON_BUTTON_W + TOP_BUTTON_GAP;
+        }
+        if (isFtbQuestIntegrationLoaded()) {
+            layouts.add(new TopBarButtonLayout(TopBarButtonId.QUEST_DETECT, x, TOP_ICON_BUTTON_W, "", true, false));
+            x += TOP_ICON_BUTTON_W + TOP_BUTTON_GAP;
+        }
         layouts.add(new TopBarButtonLayout(TopBarButtonId.CHUNK_VIEW, x, TOP_ICON_BUTTON_W, "", true, this.controller.isChunkCurtainVisible()));
+        x += TOP_ICON_BUTTON_W + TOP_BUTTON_GAP;
+        layouts.add(new TopBarButtonLayout(TopBarButtonId.GUIDE, x, TOP_ICON_BUTTON_W, "", true, this.guideOpen));
         int gearX = Math.max(x + TOP_BUTTON_GAP, this.width - TOP_ICON_BUTTON_W - 8);
         layouts.add(new TopBarButtonLayout(TopBarButtonId.GEAR, gearX, TOP_ICON_BUTTON_W, "", true, this.gearMenuOpen));
         return layouts;
     }
 
+    private boolean hasProgressionNode(ResourceLocation nodeId) {
+        return !this.controller.isProgressionEnabled()
+                || nodeId == null
+                || this.controller.getUnlockedProgressionNodes().contains(nodeId.toString());
+    }
+
+    private boolean isFtbQuestIntegrationLoaded() {
+        return ModList.get().isLoaded("ftbquests")
+                || ModList.get().isLoaded("ftb_quests")
+                || ModList.get().isLoaded("ftblibrary");
+    }
+
+    private static boolean hasRecipeViewerLoaded() {
+        return ModList.get().isLoaded("jei")
+                || ModList.get().isLoaded("emi")
+                || ModList.get().isLoaded("roughlyenoughitems");
+    }
+
     private static ResourceLocation quickBuildTexture(String key) {
         ResourceLocation id = ResourceLocation.tryParse("rtsbuilding:textures/gui/quickbuild/" + key + ".png");
+        return id == null ? ResourceLocation.withDefaultNamespace("missingno") : id;
+    }
+
+    private static ResourceLocation topbarTexture(String key) {
+        ResourceLocation id = ResourceLocation.tryParse("rtsbuilding:textures/gui/topbar/" + key + ".png");
         return id == null ? ResourceLocation.withDefaultNamespace("missingno") : id;
     }
 
@@ -1431,6 +1811,7 @@ public final class BuilderScreen extends Screen {
         this.quickBuildOpen = state.quickBuildOpen;
         this.ultimineOpen = state.ultimineOpen;
         this.ultimineLimit = Math.max(1, Math.min(256, state.ultimineLimit));
+        this.fixedRtsGuiScale = sanitizeRtsGuiScale(state.rtsGuiScale);
         this.controller.setChunkCurtainVisible(state.chunkCurtainVisible);
         try {
             this.controller.setBuildShape(ClientRtsController.BuildShape.valueOf(state.buildShape));
@@ -1455,6 +1836,7 @@ public final class BuilderScreen extends Screen {
         state.ultimineOpen = this.ultimineOpen;
         state.ultimineLimit = this.ultimineLimit;
         state.chunkCurtainVisible = this.controller.isChunkCurtainVisible();
+        state.rtsGuiScale = sanitizeRtsGuiScale(this.fixedRtsGuiScale);
         RtsClientUiStateStore.save(state);
     }
 
@@ -1462,55 +1844,145 @@ public final class BuilderScreen extends Screen {
         if (!this.gearMenuOpen) {
             return;
         }
-        int x = this.width - QUICK_BUILD_GEAR_MENU_W - 8;
-        int y = 4 + TOP_BUTTON_H + 6;
-        int h = 8 + (QUICK_BUILD_GEAR_ROW_H * 3) + 8;
-        drawPanelFrame(g, x, y, QUICK_BUILD_GEAR_MENU_W, h, 0xEE161C24, 0xFF6C839A, 0xFF0D1117);
-        drawGearMenuRow(g, mouseX, mouseY, x + 8, y + 8, QUICK_BUILD_GEAR_MENU_W - 16, QUICK_BUILD_GEAR_ROW_H,
-                "Sensitivity: " + this.controller.getInputSensitivityLabel(), false);
-        drawGearMenuRow(g, mouseX, mouseY, x + 8, y + 8 + QUICK_BUILD_GEAR_ROW_H, QUICK_BUILD_GEAR_MENU_W - 16, QUICK_BUILD_GEAR_ROW_H,
-                this.controller.isAutoStoreMinedDrops() ? "Auto Store: ON" : "Auto Store: OFF", this.controller.isAutoStoreMinedDrops());
-        drawGearMenuRow(g, mouseX, mouseY, x + 8, y + 8 + (QUICK_BUILD_GEAR_ROW_H * 2), QUICK_BUILD_GEAR_MENU_W - 16, QUICK_BUILD_GEAR_ROW_H,
-                "Guide", this.guideOpen);
+        int w = Math.min(300, this.width - 24);
+        int h = GEAR_MENU_H;
+        int x = (this.width - w) / 2;
+        int y = (this.height - h) / 2;
+        drawPanelFrame(g, x, y, w, h, 0xF0181D25, 0xFF6D7C90, 0xFF0A0D12);
+        g.fill(x + 3, y + 3, x + w - 3, y + 24, 0xFF2A303A);
+        g.drawString(this.font, Component.translatable("screen.rtsbuilding.settings.title"), x + 12, y + 10, 0xF4F7FF);
+        drawPanelFrame(g, x + w - 44, y + 6, 16, 16, 0xCC3D516D, 0xFF8FA4BF, 0xFF0D1218);
+        g.drawCenteredString(this.font, "i", x + w - 36, y + 10, 0xDDE8F4);
+        drawPanelFrame(g, x + w - 24, y + 6, 16, 16, 0xCC3D516D, 0xFF8FA4BF, 0xFF0D1218);
+        g.drawCenteredString(this.font, "x", x + w - 16, y + 10, 0xDDE8F4);
+
+        int controlsY = y + 30;
+        drawSettingsSection(g, x + 8, controlsY, w - 16, 160, Component.translatable("screen.rtsbuilding.settings.controls").getString());
+        g.drawString(this.font, Component.translatable("screen.rtsbuilding.settings.sensitivity"), x + 16, controlsY + 20, 0xC8D3DF);
+        g.drawString(this.font, this.controller.getInputSensitivityLabel(), x + w - 60, controlsY + 20, 0xEAF4FF);
+        int trackX = x + 16;
+        int trackY = controlsY + 42;
+        int trackW = w - 32;
+        g.fill(trackX, trackY, trackX + trackW, trackY + 4, 0xFF07090D);
+        g.fill(trackX + 1, trackY + 1, trackX + trackW - 1, trackY + 3, 0xFF313946);
+        int presetCount = Math.max(1, this.controller.getInputSensitivityPresetCount());
+        int knobX = trackX + (int) Math.round((this.controller.getInputSensitivityIndex() / (double) Math.max(1, presetCount - 1)) * trackW);
+        g.fill(knobX - 3, trackY - 5, knobX + 4, trackY + 8, 0xFF5FE36C);
+        g.drawString(this.font, Component.translatable("screen.rtsbuilding.settings.slow"), trackX, trackY + 10, 0xB5C1CE);
+        g.drawString(this.font, Component.translatable("screen.rtsbuilding.settings.fast"), trackX + trackW - 24, trackY + 10, 0xB5C1CE);
+
+        int scaleButtonY = controlsY + 70;
+        int minusX = x + w - 124;
+        int valueX = minusX + 26;
+        int plusX = valueX + 60;
+        g.drawString(this.font, Component.translatable("screen.rtsbuilding.settings.ui_scale"), x + 16, scaleButtonY + 7, 0xC8D3DF);
+        drawGearMenuRow(g, mouseX, mouseY, minusX, scaleButtonY, 22, 22, "-", false);
+        drawPanelFrame(g, valueX, scaleButtonY, 56, 22, 0xCC1A232E, 0xFF566B80, 0xFF0D1218);
+        g.drawCenteredString(this.font, rtsGuiScaleLabel(), valueX + 28, scaleButtonY + 7, 0xEAF4FF);
+        drawGearMenuRow(g, mouseX, mouseY, plusX, scaleButtonY, 22, 22, "+", false);
+
+        g.drawString(this.font, Component.translatable("screen.rtsbuilding.settings.auto_store"), x + 16, controlsY + 118, 0xC8D3DF);
+        drawToggleButton(g, mouseX, mouseY, x + w - 92, controlsY + 112, 76, 22, this.controller.isAutoStoreMinedDrops(),
+                text(this.controller.isAutoStoreMinedDrops() ? "gui.rtsbuilding.on" : "gui.rtsbuilding.off"));
+    }
+
+    private void drawSettingsSection(GuiGraphics g, int x, int y, int w, int h, String title) {
+        g.drawString(this.font, title, x + 2, y, 0xF4F7FF);
+        drawPanelFrame(g, x, y + 12, w, h - 12, 0xDD111720, 0xFF384351, 0xFF080B10);
+    }
+
+    private void drawToggleButton(GuiGraphics g, int mouseX, int mouseY, int x, int y, int w, int h, boolean active, String label) {
+        boolean hover = inside(mouseX, mouseY, x, y, w, h);
+        int bg = active ? (hover ? 0xDD45BA53 : 0xDD329A42) : (hover ? 0xDD3D4957 : 0xDD28313C);
+        drawPanelFrame(g, x, y, w, h, bg, active ? 0xFF8EF19A : 0xFF68788A, 0xFF10151B);
+        int switchX = active ? x + w - 26 : x + 6;
+        g.fill(switchX, y + 4, switchX + 18, y + h - 4, active ? 0xFF72F07A : 0xFF788696);
+        g.drawCenteredString(this.font, label, x + w / 2, y + 7, 0xF7FBFF);
     }
 
     private void drawGearMenuRow(GuiGraphics g, int mouseX, int mouseY, int x, int y, int w, int h, String label, boolean active) {
         boolean hover = inside(mouseX, mouseY, x, y, w, h);
-        int bg = active ? 0xAA2D6B47 : (hover ? 0xAA253343 : 0xAA1F2732);
+        int bg = active ? 0xCC2D7C4B : (hover ? 0xCC334054 : 0xCC26303D);
         drawPanelFrame(g, x, y, w, h, bg, 0xFF6A8299, 0xFF0E1116);
-        g.drawString(this.font, trimToWidth(label, w - 10), x + 6, y + 5, 0xF2F6FB);
+        g.drawCenteredString(this.font, trimToWidth(label, w - 10), x + w / 2, y + 7, 0xF2F6FB);
     }
 
     private boolean handleGearMenuClick(double mouseX, double mouseY) {
         if (!this.gearMenuOpen) {
             return false;
         }
-        int x = this.width - QUICK_BUILD_GEAR_MENU_W - 8;
-        int y = 4 + TOP_BUTTON_H + 6;
-        int h = 8 + (QUICK_BUILD_GEAR_ROW_H * 3) + 8;
-        if (!inside(mouseX, mouseY, x, y, QUICK_BUILD_GEAR_MENU_W, h)) {
+        int w = Math.min(300, this.width - 24);
+        int h = GEAR_MENU_H;
+        int x = (this.width - w) / 2;
+        int y = (this.height - h) / 2;
+        if (!inside(mouseX, mouseY, x, y, w, h)) {
             return false;
         }
-        int rowX = x + 8;
-        int rowW = QUICK_BUILD_GEAR_MENU_W - 16;
-        if (inside(mouseX, mouseY, rowX, y + 8, rowW, QUICK_BUILD_GEAR_ROW_H)) {
-            this.controller.cycleInputSensitivity();
-            return true;
-        }
-        if (inside(mouseX, mouseY, rowX, y + 8 + QUICK_BUILD_GEAR_ROW_H, rowW, QUICK_BUILD_GEAR_ROW_H)) {
-            this.controller.toggleAutoStoreMinedDrops();
-            return true;
-        }
-        if (inside(mouseX, mouseY, rowX, y + 8 + (QUICK_BUILD_GEAR_ROW_H * 2), rowW, QUICK_BUILD_GEAR_ROW_H)) {
-            this.guideOpen = !this.guideOpen;
+
+        if (inside(mouseX, mouseY, x + w - 24, y + 6, 16, 16)) {
             this.gearMenuOpen = false;
+            return true;
+        }
+        if (inside(mouseX, mouseY, x + w - 44, y + 6, 16, 16)) {
+            openGuide(GuideContext.SETTINGS);
+            return true;
+        }
+        if (inside(mouseX, mouseY, x + 16, y + 30 + 34, w - 32, 24)) {
+            this.draggingInputSensitivity = true;
+            updateInputSensitivityFromMouse(mouseX);
+            return true;
+        }
+        int controlsY = y + 30;
+        int scaleButtonY = controlsY + 70;
+        int minusX = x + w - 124;
+        int plusX = minusX + 86;
+        if (inside(mouseX, mouseY, minusX, scaleButtonY, 22, 22)) {
+            adjustRtsGuiScale(-RTS_GUI_SCALE_STEP);
+            return true;
+        }
+        if (inside(mouseX, mouseY, plusX, scaleButtonY, 22, 22)) {
+            adjustRtsGuiScale(RTS_GUI_SCALE_STEP);
+            return true;
+        }
+        if (inside(mouseX, mouseY, x + 12, controlsY + 104, w - 24, 42)) {
+            this.controller.toggleAutoStoreMinedDrops();
             return true;
         }
         return true;
     }
 
+    private void updateInputSensitivityFromMouse(double mouseX) {
+        int w = Math.min(300, this.width - 24);
+        int x = (this.width - w) / 2;
+        int trackX = x + 16;
+        int trackW = w - 32;
+        double fraction = (mouseX - trackX) / Math.max(1.0D, trackW);
+        this.controller.setInputSensitivityByFraction(fraction);
+    }
+
+    private void adjustRtsGuiScale(double delta) {
+        this.fixedRtsGuiScale = sanitizeRtsGuiScale(this.fixedRtsGuiScale + delta);
+        persistUiState();
+    }
+
+    private String rtsGuiScaleLabel() {
+        double scale = sanitizeRtsGuiScale(this.fixedRtsGuiScale);
+        if (Math.abs(scale - Math.rint(scale)) < 0.001D) {
+            return String.format(Locale.ROOT, "%.0fx", scale);
+        }
+        return String.format(Locale.ROOT, "%.1fx", scale);
+    }
+
+    private static double sanitizeRtsGuiScale(double scale) {
+        if (!Double.isFinite(scale)) {
+            return DEFAULT_RTS_GUI_SCALE;
+        }
+        double snapped = Math.round(scale / RTS_GUI_SCALE_STEP) * RTS_GUI_SCALE_STEP;
+        return Math.max(MIN_RTS_GUI_SCALE, Math.min(MAX_RTS_GUI_SCALE, snapped));
+    }
+
     private void renderQuickBuildPanel(GuiGraphics g, int mouseX, int mouseY) {
-        if (!this.quickBuildOpen) {
+        if (!this.quickBuildOpen || !hasProgressionNode(RtsProgressionNodes.REMOTE_PLACE)) {
             return;
         }
         int x = this.width - QUICK_BUILD_PANEL_W - 10;
@@ -1520,10 +1992,10 @@ public final class BuilderScreen extends Screen {
         }
         drawPanelFrame(g, x, y, QUICK_BUILD_PANEL_W, QUICK_BUILD_PANEL_H, 0xEE161C24, 0xFF6C839A, 0xFF0D1117);
         g.fill(x + 1, y + 1, x + QUICK_BUILD_PANEL_W - 1, y + 20, 0xCC233345);
-        g.drawString(this.font, "Quick Build", x + 8, y + 6, 0xF2F7FF);
+        g.drawString(this.font, Component.translatable("screen.rtsbuilding.quick_build.title"), x + 8, y + 6, 0xF2F7FF);
 
         int shapeTitleY = y + 30;
-        g.drawString(this.font, "Shape", x + 8, shapeTitleY, 0xD8E3EE);
+        g.drawString(this.font, Component.translatable("screen.rtsbuilding.quick_build.shape"), x + 8, shapeTitleY, 0xD8E3EE);
         ClientRtsController.BuildShape[] shapes = new ClientRtsController.BuildShape[] {
                 ClientRtsController.BuildShape.BLOCK,
                 ClientRtsController.BuildShape.LINE,
@@ -1545,7 +2017,7 @@ public final class BuilderScreen extends Screen {
         }
 
         int rightX = x + 88;
-        g.drawString(this.font, "Fill", rightX, shapeTitleY, 0xD8E3EE);
+        g.drawString(this.font, Component.translatable("screen.rtsbuilding.quick_build.fill"), rightX, shapeTitleY, 0xD8E3EE);
         List<ShapeFillMode> modes = availableFillModes(this.controller.getBuildShape());
         for (int i = 0; i < modes.size(); i++) {
             int rowY = y + 42 + (i * 20);
@@ -1562,7 +2034,7 @@ public final class BuilderScreen extends Screen {
         }
 
         int rotY = y + 120;
-        g.drawString(this.font, "Rotation", rightX, rotY, 0xD8E3EE);
+        g.drawString(this.font, Component.translatable("screen.rtsbuilding.quick_build.rotation"), rightX, rotY, 0xD8E3EE);
         drawPanelFrame(g, rightX, rotY + 10, 20, 18, 0xAA1C232D, 0xFF647B92, 0xFF0D1117);
         g.drawCenteredString(this.font, "-", rightX + 10, rotY + 15, 0xFFFFFF);
         drawPanelFrame(g, rightX + 24, rotY + 10, 56, 18, 0xAA1C232D, 0xFF647B92, 0xFF0D1117);
@@ -1570,7 +2042,7 @@ public final class BuilderScreen extends Screen {
         drawPanelFrame(g, rightX + 84, rotY + 10, 20, 18, 0xAA1C232D, 0xFF647B92, 0xFF0D1117);
         g.drawCenteredString(this.font, "+", rightX + 94, rotY + 15, 0xFFFFFF);
 
-        String materialCost = "Materials: " + currentShapeCostText() + " blocks";
+        String materialCost = text("screen.rtsbuilding.quick_build.materials", currentShapeCostText());
         g.drawString(this.font, materialCost, x + 8, y + QUICK_BUILD_PANEL_H - 34, 0xB8FFB8);
         g.drawString(this.font, "Selection persists automatically", x + 8, y + QUICK_BUILD_PANEL_H - 18, 0xAFC0D3);
     }
@@ -1588,7 +2060,7 @@ public final class BuilderScreen extends Screen {
     }
 
     private boolean handleQuickBuildPanelClick(double mouseX, double mouseY) {
-        if (!this.quickBuildOpen) {
+        if (!this.quickBuildOpen || !hasProgressionNode(RtsProgressionNodes.REMOTE_PLACE)) {
             return false;
         }
         int x = this.width - QUICK_BUILD_PANEL_W - 10;
@@ -1642,11 +2114,13 @@ public final class BuilderScreen extends Screen {
     }
 
     private void renderUltiminePanel(GuiGraphics g, int mouseX, int mouseY) {
-        if (!this.ultimineOpen) {
+        if (!this.ultimineOpen || !hasProgressionNode(RtsProgressionNodes.ULTIMINE)) {
             return;
         }
         int x = this.width - ULTIMINE_PANEL_W - 10;
-        int y = TOP_H + 10 + (this.quickBuildOpen && getFloatingPanelAvailableHeight(TOP_H + 10) >= QUICK_BUILD_PANEL_H
+        int y = TOP_H + 10 + (this.quickBuildOpen
+                && hasProgressionNode(RtsProgressionNodes.REMOTE_PLACE)
+                && getFloatingPanelAvailableHeight(TOP_H + 10) >= QUICK_BUILD_PANEL_H
                 ? QUICK_BUILD_PANEL_H + 8
                 : 0);
         if (getFloatingPanelAvailableHeight(y) < ULTIMINE_PANEL_H) {
@@ -1655,10 +2129,10 @@ public final class BuilderScreen extends Screen {
 
         drawPanelFrame(g, x, y, ULTIMINE_PANEL_W, ULTIMINE_PANEL_H, 0xEE161C24, 0xFF6C839A, 0xFF0D1117);
         g.fill(x + 1, y + 1, x + ULTIMINE_PANEL_W - 1, y + 20, 0xCC233345);
-        g.drawString(this.font, "Ultimine", x + 8, y + 6, 0xF2F7FF);
+        g.drawString(this.font, Component.translatable("screen.rtsbuilding.ultimine.title"), x + 8, y + 6, 0xF2F7FF);
 
         int rowY = y + 32;
-        g.drawString(this.font, "Blocks", x + 8, rowY, 0xD8E3EE);
+        g.drawString(this.font, Component.translatable("screen.rtsbuilding.ultimine.blocks"), x + 8, rowY, 0xD8E3EE);
         drawPanelFrame(g, x + 8, rowY + 12, 24, 18, 0xAA1C232D, 0xFF647B92, 0xFF0D1117);
         g.drawCenteredString(this.font, "-", x + 20, rowY + 17, 0xFFFFFF);
         drawPanelFrame(g, x + 38, rowY + 12, 58, 18, 0xAA243547, 0xFF647B92, 0xFF0D1117);
@@ -1671,8 +2145,8 @@ public final class BuilderScreen extends Screen {
         int stage = this.controller.getMineProgressStage();
         int progressY = y + 82;
         String progressLabel = stage >= 0
-                ? "Breaking " + Math.max(1, this.lastUltimineSentLimit)
-                : "Ready";
+                ? text("screen.rtsbuilding.ultimine.breaking", Math.max(1, this.lastUltimineSentLimit))
+                : text("screen.rtsbuilding.ultimine.ready");
         g.drawString(this.font, progressLabel, x + 8, progressY - 12, stage >= 0 ? 0xB8FFB8 : 0xAFC0D3);
         drawPanelFrame(g, x + 8, progressY, ULTIMINE_PANEL_W - 16, 12, 0xAA101820, 0xFF647B92, 0xFF0D1117);
         int fillW = stage < 0 ? 0 : Math.min(ULTIMINE_PANEL_W - 20, Math.max(1, (int) (((stage + 1) / 10.0F) * (ULTIMINE_PANEL_W - 20))));
@@ -1682,11 +2156,13 @@ public final class BuilderScreen extends Screen {
     }
 
     private boolean handleUltiminePanelClick(double mouseX, double mouseY) {
-        if (!this.ultimineOpen) {
+        if (!this.ultimineOpen || !hasProgressionNode(RtsProgressionNodes.ULTIMINE)) {
             return false;
         }
         int x = this.width - ULTIMINE_PANEL_W - 10;
-        int y = TOP_H + 10 + (this.quickBuildOpen && getFloatingPanelAvailableHeight(TOP_H + 10) >= QUICK_BUILD_PANEL_H
+        int y = TOP_H + 10 + (this.quickBuildOpen
+                && hasProgressionNode(RtsProgressionNodes.REMOTE_PLACE)
+                && getFloatingPanelAvailableHeight(TOP_H + 10) >= QUICK_BUILD_PANEL_H
                 ? QUICK_BUILD_PANEL_H + 8
                 : 0);
         if (getFloatingPanelAvailableHeight(y) < ULTIMINE_PANEL_H || !inside(mouseX, mouseY, x, y, ULTIMINE_PANEL_W, ULTIMINE_PANEL_H)) {
@@ -1808,7 +2284,12 @@ public final class BuilderScreen extends Screen {
 
         drawPanelFrame(g, layout.panelX(), layout.panelY(), layout.panelW(), layout.panelH(), 0xD014151A, 0xFF64788E, 0xFF0D1015);
         g.fill(layout.panelX() + 1, layout.panelY() + 1, layout.panelX() + layout.panelW() - 1, layout.panelY() + BOTTOM_PANEL_HEADER_H, 0xCC1C242F);
-        g.drawString(this.font, "RTS Storage", layout.panelX() + 8, layout.panelY() + 5, 0xF2F6FB);
+        g.drawString(this.font, Component.translatable("screen.rtsbuilding.storage.title"), layout.panelX() + 8, layout.panelY() + 5, 0xF2F6FB);
+        int guideX = bottomGuideButtonX(layout);
+        int guideY = bottomGuideButtonY(layout);
+        boolean guideHover = inside(mouseX, mouseY, guideX, guideY, 12, 12);
+        g.fill(guideX, guideY, guideX + 12, guideY + 12, guideHover ? 0xCC41576F : 0xAA2B3542);
+        g.drawCenteredString(this.font, "i", guideX + 6, guideY + 2, 0xEAF4FF);
 
         drawSortButton(g, sortX, sortY, "S");
         drawSortButton(g, sortX, sortY + SORT_BUTTON_SIZE + 4, this.controller.isStorageSortAscending() ? "A" : "D");
@@ -1964,7 +2445,7 @@ public final class BuilderScreen extends Screen {
 
     private void drawCategoryPanel(GuiGraphics g, int mouseX, int mouseY, int x, int y, int width, int height) {
         g.fill(x, y, x + width, y + height, 0x8820222A);
-        g.drawCenteredString(this.font, "Category", x + width / 2, y + 2, 0xFFFFFF);
+        g.drawCenteredString(this.font, Component.translatable("screen.rtsbuilding.storage.category"), x + width / 2, y + 2, 0xFFFFFF);
 
         int upX0 = x + width - 24;
         int upX1 = x + width - 13;
@@ -2400,6 +2881,14 @@ public final class BuilderScreen extends Screen {
                     this.controller.setChunkCurtainVisible(!this.controller.isChunkCurtainVisible());
                     persistUiState();
                 }
+                case GUIDE -> {
+                    if (this.guideOpen && this.guideContext == GuideContext.TOP) {
+                        this.guideOpen = false;
+                    } else {
+                        openGuide(GuideContext.TOP);
+                    }
+                    this.gearMenuOpen = false;
+                }
                 case GEAR -> this.gearMenuOpen = !this.gearMenuOpen;
                 default -> {
                 }
@@ -2416,6 +2905,11 @@ public final class BuilderScreen extends Screen {
             return false;
         }
 
+        if (inside(mouseX, mouseY, bottomGuideButtonX(layout), bottomGuideButtonY(layout), 12, 12)) {
+            openGuide(GuideContext.BOTTOM);
+            this.gearMenuOpen = false;
+            return true;
+        }
         if (layout.isInsideHeader(mouseX, mouseY)) {
             return true;
         }
@@ -2576,6 +3070,14 @@ public final class BuilderScreen extends Screen {
             return true;
         }
         return true;
+    }
+
+    private int bottomGuideButtonX(BottomPanelLayout layout) {
+        return layout.panelX() + layout.panelW() - 20;
+    }
+
+    private int bottomGuideButtonY(BottomPanelLayout layout) {
+        return layout.panelY() + 3;
     }
 
     private boolean handleSearchClearClick(double mouseX, double mouseY, int searchX, int searchY, int searchAreaWidth) {
@@ -2781,7 +3283,7 @@ public final class BuilderScreen extends Screen {
             this.controller.toggleCraftablesShowUnavailable();
             return true;
         }
-        return resolveCraftableEntryIndex(mouseX, mouseY, x, y, width, height) >= 0;
+        return true;
     }
 
     private void applyCraftSearchDraft() {
@@ -3096,8 +3598,9 @@ public final class BuilderScreen extends Screen {
         int storageW = Math.max(120, panelW - BOTTOM_PANEL_PADDING - storageX);
         int craftPanelX = storageX + Math.max(120, storageW - CRAFT_PANEL_W);
         int mainStorageW = Math.max(120, craftPanelX - storageX - CRAFT_PANEL_GAP);
-        int searchW = Math.max(80, storageW - 102);
-        int pagerX = storageX + searchW + 4;
+        int searchW = Math.max(72, mainStorageW - 82);
+        int pagerX = Math.min(storageX + searchW + 4, craftPanelX - 80);
+        searchW = Math.max(56, pagerX - storageX - 4);
         int toolY = storageY + 17;
         int gridY = toolY + TOOL_AREA_H + 4;
         int gridH = Math.max(SLOT, panelY + panelH - BOTTOM_PANEL_PADDING - gridY);
@@ -3183,6 +3686,14 @@ public final class BuilderScreen extends Screen {
                 case 5, 6, 7 -> this.cY + CRAFT_DOCK_C_SIZE + CRAFT_DOCK_GAP;
                 default -> this.cY;
             };
+        }
+    }
+
+    private record RtsUiScaleFrame(BuilderScreen screen, int oldW, int oldH, double scale) implements AutoCloseable {
+        @Override
+        public void close() {
+            this.screen.width = this.oldW;
+            this.screen.height = this.oldH;
         }
     }
 
@@ -3342,27 +3853,15 @@ public final class BuilderScreen extends Screen {
         ShapeBuildSession session = this.shapeBuildSession;
         if (session.phase() == ShapeBuildPhase.NEED_SECOND_POINT) {
             BlockPos pointB = resolveShapePlanePoint(session, hit);
-            if (requiresThirdPoint(shape)) {
-                this.shapeBuildSession = new ShapeBuildSession(
-                        shape,
-                        session.planeFace(),
-                        session.placementFace(),
-                        session.pointA(),
-                        pointB,
-                        ShapeBuildPhase.NEED_THIRD_POINT,
-                        0,
-                        mouseY);
-            } else {
-                this.shapeBuildSession = new ShapeBuildSession(
-                        shape,
-                        session.planeFace(),
-                        session.placementFace(),
-                        session.pointA(),
-                        pointB,
-                        ShapeBuildPhase.READY_CONFIRM,
-                        0,
-                        session.boxHeightMouseBaseY());
-            }
+            this.shapeBuildSession = new ShapeBuildSession(
+                    shape,
+                    session.planeFace(),
+                    session.placementFace(),
+                    session.pointA(),
+                    pointB,
+                    ShapeBuildPhase.READY_CONFIRM,
+                    0,
+                    requiresThirdPoint(shape) ? mouseY : session.boxHeightMouseBaseY());
             return;
         }
 
@@ -3431,6 +3930,12 @@ public final class BuilderScreen extends Screen {
     }
 
     public ShapeGhostPreview getShapeGhostPreview() {
+        if (this.leftMiningActive && this.ultimineOpen) {
+            List<BlockPos> preview = collectUltiminePreviewBlocks();
+            if (!preview.isEmpty()) {
+                return new ShapeGhostPreview(preview, true);
+            }
+        }
         if (this.controller.getBuildShape() == ClientRtsController.BuildShape.BLOCK) {
             return ShapeGhostPreview.EMPTY;
         }
@@ -3447,6 +3952,51 @@ public final class BuilderScreen extends Screen {
         }
         boolean ready = this.shapeBuildSession != null && this.shapeBuildSession.phase() == ShapeBuildPhase.READY_CONFIRM;
         return new ShapeGhostPreview(blocks, ready);
+    }
+
+    private List<BlockPos> collectUltiminePreviewBlocks() {
+        if (this.minecraft == null || this.minecraft.level == null) {
+            return List.of();
+        }
+        BlockPos seed = this.controller.getMineProgressPos();
+        if (seed == null) {
+            BlockHitResult hit = pickBlockHit();
+            if (hit == null) {
+                return List.of();
+            }
+            seed = hit.getBlockPos();
+        }
+        BlockState seedState = this.minecraft.level.getBlockState(seed);
+        if (seedState.isAir()) {
+            return List.of();
+        }
+
+        int limit = Math.max(1, Math.min(256, this.ultimineLimit));
+        List<BlockPos> result = new ArrayList<>();
+        Set<BlockPos> visited = new HashSet<>();
+        Deque<BlockPos> frontier = new ArrayDeque<>();
+        BlockPos immutableSeed = seed.immutable();
+        visited.add(immutableSeed);
+        frontier.addLast(immutableSeed);
+
+        while (!frontier.isEmpty() && result.size() < limit) {
+            BlockPos current = frontier.removeFirst();
+            BlockState state = this.minecraft.level.getBlockState(current);
+            if (state.isAir() || state.getBlock() != seedState.getBlock()) {
+                continue;
+            }
+            result.add(current.immutable());
+            for (Direction direction : Direction.values()) {
+                if (visited.size() >= limit * 8) {
+                    break;
+                }
+                BlockPos next = current.relative(direction).immutable();
+                if (visited.add(next)) {
+                    frontier.addLast(next);
+                }
+            }
+        }
+        return result;
     }
 
     private ShapeBuildInput resolveCurrentShapeBuildInput(BlockHitResult cursorHit, boolean requireReady) {
@@ -3483,11 +4033,23 @@ public final class BuilderScreen extends Screen {
                 return null;
             }
             pointB = applyShapeFootprintNudges(session.shape(), session.planeFace(), pointA, pointB);
-            return new ShapeBuildInput(session.shape(), session.planeFace(), session.placementFace(), pointA, pointB, session.boxHeightOffset());
+            return new ShapeBuildInput(session.shape(), session.planeFace(), session.placementFace(), pointA, pointB, resolveBoxHeightOffset(session));
         }
 
         pointB = applyShapeFootprintNudges(session.shape(), session.planeFace(), pointA, pointB);
-        return new ShapeBuildInput(session.shape(), session.planeFace(), session.placementFace(), pointA, pointB, session.boxHeightOffset());
+        return new ShapeBuildInput(session.shape(), session.planeFace(), session.placementFace(), pointA, pointB, resolveBoxHeightOffset(session));
+    }
+
+    private int resolveBoxHeightOffset(ShapeBuildSession session) {
+        if (session == null) {
+            return 0;
+        }
+        if (session.shape() != ClientRtsController.BuildShape.BOX
+                || (session.phase() != ShapeBuildPhase.READY_CONFIRM && session.phase() != ShapeBuildPhase.NEED_THIRD_POINT)) {
+            return session.boxHeightOffset();
+        }
+        int mouseOffset = (int) Math.round((session.boxHeightMouseBaseY() - this.shapeCursorY) / 10.0D);
+        return clampShapeOffset(session.boxHeightOffset() + mouseOffset);
     }
 
     private BlockPos resolveShapePlanePoint(ShapeBuildSession session, BlockHitResult cursorHit) {
@@ -4783,74 +5345,265 @@ public final class BuilderScreen extends Screen {
     }
 
     private void renderGuidePanel(GuiGraphics g) {
-        int panelW = Math.min(620, Math.max(360, this.width - 48));
-        int panelH = Math.min(320, Math.max(220, this.height - 72));
-        int x = (this.width - panelW) / 2;
-        int y = (this.height - panelH) / 2;
+        GuidePanelRect rect = guidePanelRect();
+        int panelW = rect.w();
+        int panelH = rect.h();
+        int x = rect.x();
+        int y = rect.y();
         int closeX = x + panelW - 20;
 
-        g.fill(0, 0, this.width, this.height, 0x88000000);
         g.fill(x, y, x + panelW, y + panelH, 0xEE151A21);
         g.hLine(x, x + panelW, y, 0xFF6E7C90);
         g.hLine(x, x + panelW, y + panelH, 0xFF0E1014);
         g.vLine(x, y, y + panelH, 0xFF6E7C90);
         g.vLine(x + panelW, y, y + panelH, 0xFF0E1014);
 
-        g.drawString(this.font, "How To Use RTS Builder", x + 12, y + 10, 0xFFFFFF);
+        g.drawString(this.font, guideTitle(), x + 12, y + 10, 0xFFFFFF);
         g.fill(closeX, y + 8, closeX + 12, y + 20, 0xAA2C3442);
         g.drawCenteredString(this.font, "X", closeX + 6, y + 11, 0xFFFFFF);
 
-        String[] lines = new String[] {
-                "1. Choose a top mode: Interact, Link Storage, or Rotate.",
-                "2. Press F to jump into Funnel mode quickly (Shift+F cycles Fill/Hollow/Skeleton).",
-                "3. Mine blocks by holding the left mouse button in Interact mode.",
-                "4. Right-click normally: place/build first, then fallback to interaction if nothing can be placed.",
-                "5. Hold Shift and right-click to force item placement/use on interactable blocks.",
-                "6. Right-click a bucket/container in Storage, Tools, or RTS Pin to transfer 1 bucket into RTS Fluid.",
-                "7. Click a fluid slot (orange strip) to select fluid placement mode.",
-                "8. Hold ALT to open radial, hover shape sector, release ALT to pick shape.",
-                "9. Cube context (right panel): Fill / Hollow / Skeleton.",
-                "10. Non-BLOCK staged flow: set points first, then RMB confirm.",
-                "11. 2D shapes use 2 clicks + confirm; CUBE uses 3 clicks + confirm.",
-                "12. After A-point: PgUp/PgDn adjusts length; hold Shift for width.",
-                "13. For CUBE height stage: hold Ctrl + PgUp/PgDn (Alt for x4 step).",
-                "14. ROT button rotates around build center by 15deg per step.",
-                "15. Shape dimensions/radius are capped at 32 for this phase.",
-                "16. Ctrl+Z undo last batch, Ctrl+Y redo (same selected item required).",
-                "17. Alt+Ctrl+RMB opens Tool/Pin interaction wheel.",
-                "18. In Link Storage mode, right-click is disabled; left-click containers to link only."
-        };
-
-        int lineY = y + 30;
-        int maxTextW = panelW - 24;
-        for (String line : lines) {
-            g.drawString(this.font, trimToWidth(line, maxTextW), x + 12, lineY, 0xE6EDF8);
-            lineY += 14;
-            if (lineY > y + panelH - 14) {
-                break;
+        GuideTopic[] topics = guideTopics();
+        this.guidePage = Mth.clamp(this.guidePage, 0, Math.max(0, topics.length - 1));
+        int tabX = x + 8;
+        int tabY = y + 30;
+        int tabW = guideTopicTabWidth();
+        for (int i = 0; i < topics.length; i++) {
+            int ty = tabY + i * 22;
+            boolean active = i == this.guidePage;
+            int bg = active ? 0xCC355A71 : 0x88303A45;
+            drawPanelFrame(g, tabX, ty, tabW, 18, bg, active ? 0xFF8FB4D0 : 0xFF4A5665, 0xFF0D1218);
+            if (this.guideContext == GuideContext.BOTTOM) {
+                String label = trimToWidth(Component.translatable(topics[i].titleKey()).getString(), tabW - 8);
+                g.drawString(this.font, label, tabX + 4, ty + 5, active ? 0xFFF4FBFF : 0xFFB9C7D5, false);
+            } else {
+                drawGuideTopicIcon(g, topics[i].icon(), tabX + 10, ty + 9, active ? 0xFFF4FBFF : 0xFFB9C7D5);
             }
+        }
+
+        int textX = x + tabW + 18;
+        int lineY = y + 32;
+        int maxTextW = panelW - tabW - 30;
+        GuideTopic topic = topics[this.guidePage];
+        g.drawString(this.font, Component.translatable(topic.titleKey()), textX, lineY, 0xFFE7C46A);
+        lineY += 16;
+        for (String key : topic.lineKeys()) {
+            for (var split : this.font.split(Component.translatable(key), maxTextW)) {
+                g.drawString(this.font, split, textX, lineY, 0xE6EDF8);
+                lineY += 12;
+                if (lineY > y + panelH - 12) {
+                    return;
+                }
+            }
+            lineY += 3;
         }
     }
 
     private boolean isInsideGuidePanel(double mouseX, double mouseY) {
-        int panelW = Math.min(560, Math.max(320, this.width - 48));
-        int panelH = Math.min(280, Math.max(210, this.height - 72));
-        int x = (this.width - panelW) / 2;
-        int y = (this.height - panelH) / 2;
-        return inside(mouseX, mouseY, x, y, panelW, panelH);
+        GuidePanelRect rect = guidePanelRect();
+        return inside(mouseX, mouseY, rect.x(), rect.y(), rect.w(), rect.h());
     }
 
     private boolean isInsideGuideClose(double mouseX, double mouseY) {
-        int panelW = Math.min(560, Math.max(320, this.width - 48));
-        int panelH = Math.min(280, Math.max(210, this.height - 72));
-        int x = (this.width - panelW) / 2;
-        int y = (this.height - panelH) / 2;
-        int closeX = x + panelW - 20;
-        return inside(mouseX, mouseY, closeX, y + 8, 12, 12);
+        GuidePanelRect rect = guidePanelRect();
+        int closeX = rect.x() + rect.w() - 20;
+        return inside(mouseX, mouseY, closeX, rect.y() + 8, 12, 12);
+    }
+
+    private boolean isInsideGuidePrev(double mouseX, double mouseY) {
+        return false;
+    }
+
+    private boolean isInsideGuideNext(double mouseX, double mouseY) {
+        return false;
+    }
+
+    private void drawButtonLike(GuiGraphics g, int x, int y, int w, int h, String label, boolean active) {
+        int bg = active ? 0xCC334E63 : 0x66303A45;
+        drawPanelFrame(g, x, y, w, h, bg, active ? 0xFF7B91A8 : 0xFF4A5665, 0xFF0D1218);
+        g.drawCenteredString(this.font, label, x + w / 2, y + 4, active ? 0xF2F7FF : 0x8895A4);
+    }
+
+    private void openGuide(GuideContext context) {
+        this.guideOpen = true;
+        this.guideContext = context;
+        this.guidePage = 0;
+    }
+
+    private Component guideTitle() {
+        return switch (this.guideContext) {
+            case BOTTOM -> Component.translatable("screen.rtsbuilding.guide.bottom.title");
+            case SETTINGS -> Component.translatable("screen.rtsbuilding.guide.settings.title");
+            default -> Component.translatable("screen.rtsbuilding.guide.top.title");
+        };
+    }
+
+    private GuideTopic[] guideTopics() {
+        return switch (this.guideContext) {
+            case BOTTOM -> new GuideTopic[] {
+                    topic(GuideIcon.SORT, "screen.rtsbuilding.guide.bottom.sort.title", "screen.rtsbuilding.guide.bottom.sort.1", "screen.rtsbuilding.guide.bottom.sort.2", "screen.rtsbuilding.guide.bottom.sort.3"),
+                    topic(GuideIcon.CRAFT, "screen.rtsbuilding.guide.bottom.remote.title", "screen.rtsbuilding.guide.bottom.remote.1", "screen.rtsbuilding.guide.bottom.remote.2", "screen.rtsbuilding.guide.bottom.remote.3"),
+                    topic(GuideIcon.GRID, "screen.rtsbuilding.guide.bottom.main.title", "screen.rtsbuilding.guide.bottom.main.1", "screen.rtsbuilding.guide.bottom.main.2", "screen.rtsbuilding.guide.bottom.main.3", "screen.rtsbuilding.guide.bottom.main.4"),
+                    topic(GuideIcon.PIN, "screen.rtsbuilding.guide.bottom.recent_pins.title", "screen.rtsbuilding.guide.bottom.recent_pins.1", "screen.rtsbuilding.guide.bottom.recent_pins.2", "screen.rtsbuilding.guide.bottom.recent_pins.3"),
+                    topic(GuideIcon.SEARCH, "screen.rtsbuilding.guide.bottom.craft_panel.title", "screen.rtsbuilding.guide.bottom.craft_panel.1", "screen.rtsbuilding.guide.bottom.craft_panel.2")
+            };
+            case SETTINGS -> new GuideTopic[] {
+                    topic(GuideIcon.SLIDER, "screen.rtsbuilding.guide.settings.sensitivity.title", "screen.rtsbuilding.guide.settings.sensitivity.1", "screen.rtsbuilding.guide.settings.sensitivity.2"),
+                    topic(GuideIcon.GRID, "screen.rtsbuilding.guide.settings.ui_scale.title", "screen.rtsbuilding.guide.settings.ui_scale.1", "screen.rtsbuilding.guide.settings.ui_scale.2"),
+                    topic(GuideIcon.TOGGLE, "screen.rtsbuilding.guide.settings.autostore.title", "screen.rtsbuilding.guide.settings.autostore.1", "screen.rtsbuilding.guide.settings.autostore.2"),
+                    topic(GuideIcon.GEAR, "screen.rtsbuilding.guide.settings.config.title", "screen.rtsbuilding.guide.settings.config.1", "screen.rtsbuilding.guide.settings.config.2")
+            };
+            default -> new GuideTopic[] {
+                    topic(GuideIcon.HAND, "screen.rtsbuilding.guide.top.interact.title", "screen.rtsbuilding.guide.top.interact.1", "screen.rtsbuilding.guide.top.interact.2"),
+                    topic(GuideIcon.LINK, "screen.rtsbuilding.guide.top.link.title", "screen.rtsbuilding.guide.top.link.1", "screen.rtsbuilding.guide.top.link.2"),
+                    topic(GuideIcon.FUNNEL, "screen.rtsbuilding.guide.top.funnel.title", "screen.rtsbuilding.guide.top.funnel.1", "screen.rtsbuilding.guide.top.funnel.2"),
+                    topic(GuideIcon.ROTATE, "screen.rtsbuilding.guide.top.rotate.title", "screen.rtsbuilding.guide.top.rotate.1"),
+                    topic(GuideIcon.BUILD, "screen.rtsbuilding.guide.top.build.title", "screen.rtsbuilding.guide.top.build.1", "screen.rtsbuilding.guide.top.build.2"),
+                    topic(GuideIcon.PICKAXE, "screen.rtsbuilding.guide.top.ultimine.title", "screen.rtsbuilding.guide.top.ultimine.1", "screen.rtsbuilding.guide.top.ultimine.2"),
+                    topic(GuideIcon.GRID, "screen.rtsbuilding.guide.top.chunk.title", "screen.rtsbuilding.guide.top.chunk.1")
+            };
+        };
+    }
+
+    private GuideTopic topic(GuideIcon icon, String titleKey, String... lineKeys) {
+        return new GuideTopic(icon, titleKey, lineKeys);
+    }
+
+    private int getGuidePageCount() {
+        return guideTopics().length;
+    }
+
+    private GuidePanelRect guidePanelRect() {
+        int panelW = Math.min(330, Math.max(250, this.width - 28));
+        int panelH = Math.min(178, Math.max(138, this.height - 90));
+        int x;
+        int y;
+        if (this.guideContext == GuideContext.BOTTOM) {
+            x = Math.max(8, this.width - panelW - 8);
+            y = Math.max(TOP_H + 6, getBottomY() - panelH - 6);
+        } else if (this.guideContext == GuideContext.SETTINGS) {
+            int settingsW = Math.min(300, this.width - 24);
+            int settingsX = (this.width - settingsW) / 2;
+            x = settingsX + settingsW + 6;
+            if (x + panelW > this.width - 8) {
+                x = Math.max(8, settingsX - panelW - 6);
+            }
+            int settingsH = GEAR_MENU_H;
+            y = Math.max(8, (this.height - settingsH) / 2);
+        } else {
+            x = 8;
+            y = TOP_H + 6;
+        }
+        return new GuidePanelRect(x, y, panelW, panelH);
+    }
+
+    private int resolveGuideTopicClick(double mouseX, double mouseY) {
+        GuidePanelRect rect = guidePanelRect();
+        GuideTopic[] topics = guideTopics();
+        int tabX = rect.x() + 8;
+        int tabY = rect.y() + 30;
+        int tabW = guideTopicTabWidth();
+        for (int i = 0; i < topics.length; i++) {
+            if (inside(mouseX, mouseY, tabX, tabY + i * 22, tabW, 18)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private int guideTopicTabWidth() {
+        return this.guideContext == GuideContext.BOTTOM ? 92 : 20;
+    }
+
+    private void drawGuideTopicIcon(GuiGraphics g, GuideIcon icon, int cx, int cy, int color) {
+        switch (icon) {
+            case HAND -> drawGuideTextureIcon(g, TOPBAR_INTERACT_ACTIVE, cx, cy);
+            case LINK -> drawGuideTextureIcon(g, TOPBAR_LINK_ACTIVE, cx, cy);
+            case FUNNEL -> drawGuideTextureIcon(g, TOPBAR_FUNNEL_ACTIVE, cx, cy);
+            case ROTATE -> drawGuideTextureIcon(g, TOPBAR_ROTATE_ACTIVE, cx, cy);
+            case BUILD -> drawGuideTextureIcon(g, TOPBAR_QUICK_BUILD_ACTIVE, cx, cy);
+            case PICKAXE -> drawGuideTextureIcon(g, TOPBAR_ULTIMINE_ACTIVE, cx, cy);
+            case GRID -> drawGuideTextureIcon(g, TOPBAR_CHUNK_VIEW_ACTIVE, cx, cy);
+            case SEARCH -> {
+                g.fill(cx - 6, cy - 6, cx + 2, cy - 4, color);
+                g.fill(cx - 6, cy + 1, cx + 2, cy + 3, color);
+                g.fill(cx - 6, cy - 6, cx - 4, cy + 3, color);
+                g.fill(cx + 1, cy - 6, cx + 3, cy + 3, color);
+                g.fill(cx + 3, cy + 3, cx + 7, cy + 7, color);
+            }
+            case SORT -> {
+                g.fill(cx - 7, cy - 7, cx - 2, cy - 5, color);
+                g.fill(cx - 7, cy - 1, cx + 2, cy + 1, color);
+                g.fill(cx - 7, cy + 5, cx + 7, cy + 7, color);
+                g.fill(cx + 5, cy - 7, cx + 7, cy - 3, color);
+                g.fill(cx + 3, cy - 4, cx + 9, cy - 2, color);
+                g.fill(cx + 5, cy + 2, cx + 7, cy + 7, color);
+                g.fill(cx + 3, cy + 1, cx + 9, cy + 3, color);
+            }
+            case CLOCK -> {
+                g.fill(cx - 6, cy - 6, cx + 6, cy + 6, 0x331B222C);
+                g.hLine(cx - 4, cx + 4, cy - 6, color);
+                g.hLine(cx - 4, cx + 4, cy + 6, color);
+                g.vLine(cx - 6, cy - 4, cy + 4, color);
+                g.vLine(cx + 6, cy - 4, cy + 4, color);
+                g.fill(cx, cy - 4, cx + 2, cy + 1, color);
+                g.fill(cx, cy, cx + 5, cy + 2, color);
+            }
+            case DROPLET -> {
+                g.fill(cx - 2, cy - 7, cx + 2, cy - 4, color);
+                g.fill(cx - 5, cy - 3, cx + 5, cy + 5, color);
+                g.fill(cx - 3, cy + 5, cx + 3, cy + 8, color);
+            }
+            case PIN -> {
+                g.fill(cx - 4, cy - 7, cx + 4, cy - 5, color);
+                g.fill(cx - 2, cy - 5, cx + 2, cy + 2, color);
+                g.fill(cx - 5, cy + 1, cx + 5, cy + 3, color);
+                g.fill(cx, cy + 3, cx + 1, cy + 8, color);
+            }
+            case CRAFT -> {
+                g.fill(cx - 7, cy - 7, cx + 7, cy + 7, color);
+                g.fill(cx - 4, cy - 4, cx + 4, cy + 4, 0xFF1B222C);
+                g.fill(cx - 1, cy - 7, cx + 1, cy + 7, 0xFF1B222C);
+                g.fill(cx - 7, cy - 1, cx + 7, cy + 1, 0xFF1B222C);
+            }
+            case SLIDER -> {
+                g.fill(cx - 7, cy - 4, cx + 7, cy - 2, color);
+                g.fill(cx - 7, cy + 4, cx + 7, cy + 6, color);
+                g.fill(cx - 2, cy - 7, cx + 2, cy + 1, color);
+                g.fill(cx + 3, cy + 1, cx + 7, cy + 8, color);
+            }
+            case TOGGLE -> {
+                g.fill(cx - 8, cy - 4, cx + 8, cy + 4, color);
+                g.fill(cx + 1, cy - 7, cx + 7, cy + 7, 0xFF1B222C);
+            }
+            case GEAR -> drawGearIcon(g, cx, cy, color);
+        }
+    }
+
+    private void drawGuideTextureIcon(GuiGraphics g, ResourceLocation texture, int cx, int cy) {
+        g.pose().pushPose();
+        g.pose().translate(cx - 9, cy - 9, 0.0F);
+        g.pose().scale(0.75F, 0.75F, 1.0F);
+        g.blit(texture, 0, 0, 0, 0, TOP_BUTTON_H, TOP_BUTTON_H, TOP_BUTTON_H, TOP_BUTTON_H);
+        g.pose().popPose();
     }
 
     private String trimToWidth(String text, int maxWidth) {
         return RtsClientUiUtil.trimToWidth(this.font, text, maxWidth);
+    }
+
+    private String text(String key, Object... args) {
+        return Component.translatable(key, args).getString();
+    }
+
+    private String selectedItemStatusLabel() {
+        ItemStack preview = this.controller.getSelectedItemPreview();
+        String label = this.controller.getSelectedItemLabel();
+        if (preview != null && !preview.isEmpty() && preview.isDamageableItem()) {
+            int max = preview.getMaxDamage();
+            int durability = Math.max(0, max - preview.getDamageValue());
+            return label + " " + durability + "/" + max;
+        }
+        return label;
     }
 
     private void drawScaledText(GuiGraphics g, String text, int x, int y, int color, float scale) {
@@ -5052,14 +5805,14 @@ public final class BuilderScreen extends Screen {
         };
     }
 
-    private static String fillModeLabel(ShapeFillMode mode) {
+    private String fillModeLabel(ShapeFillMode mode) {
         if (mode == null) {
-            return "Fill";
+            return text("screen.rtsbuilding.fill.fill");
         }
         return switch (mode) {
-            case FILL -> "Fill";
-            case HOLLOW -> "Hollow";
-            case SKELETON -> "Skeleton";
+            case FILL -> text("screen.rtsbuilding.fill.fill");
+            case HOLLOW -> text("screen.rtsbuilding.fill.hollow");
+            case SKELETON -> text("screen.rtsbuilding.fill.skeleton");
         };
     }
 
@@ -5123,33 +5876,32 @@ public final class BuilderScreen extends Screen {
     private String pendingShapeStatusText() {
         ClientRtsController.BuildShape currentShape = this.controller.getBuildShape();
         if (currentShape == ClientRtsController.BuildShape.BLOCK) {
-            return "RMB: place";
+            return text("screen.rtsbuilding.shape_status.place");
         }
         if (this.shapeBuildSession == null || this.shapeBuildSession.shape() != currentShape) {
-            return "Step1: RMB set A";
+            return text("screen.rtsbuilding.shape_status.step_a");
         }
         return switch (this.shapeBuildSession.phase()) {
             case NEED_SECOND_POINT -> {
                 BlockPos a = this.shapeBuildSession.pointA();
-                yield "A: " + a.getX() + "," + a.getY() + "," + a.getZ()
-                        + "  Step2: RMB set B";
+                yield text("screen.rtsbuilding.shape_status.step_b", a.getX(), a.getY(), a.getZ());
             }
-            case NEED_THIRD_POINT -> "Step3: Ctrl+PgUp/PgDn adjust height, RMB lock height";
-            case READY_CONFIRM -> "RMB: confirm build";
+            case NEED_THIRD_POINT -> text("screen.rtsbuilding.shape_status.step_height");
+            case READY_CONFIRM -> text("screen.rtsbuilding.shape_status.confirm");
         };
     }
 
-    private static String shapeLabel(ClientRtsController.BuildShape shape) {
+    private String shapeLabel(ClientRtsController.BuildShape shape) {
         if (shape == null) {
-            return "BLOCK";
+            return text("screen.rtsbuilding.shape.block");
         }
         return switch (shape) {
-            case BLOCK -> "BLOCK";
-            case LINE -> "LINE";
-            case SQUARE -> "SQUARE";
-            case WALL -> "WALL";
-            case CIRCLE -> "CIRCLE";
-            case BOX -> "CUBE";
+            case BLOCK -> text("screen.rtsbuilding.shape.block");
+            case LINE -> text("screen.rtsbuilding.shape.line");
+            case SQUARE -> text("screen.rtsbuilding.shape.square");
+            case WALL -> text("screen.rtsbuilding.shape.wall");
+            case CIRCLE -> text("screen.rtsbuilding.shape.circle");
+            case BOX -> text("screen.rtsbuilding.shape.box");
         };
     }
 
@@ -5273,6 +6025,37 @@ public final class BuilderScreen extends Screen {
         FILL,
         HOLLOW,
         SKELETON
+    }
+
+    private enum GuideContext {
+        TOP,
+        BOTTOM,
+        SETTINGS
+    }
+
+    private enum GuideIcon {
+        HAND,
+        LINK,
+        FUNNEL,
+        ROTATE,
+        BUILD,
+        PICKAXE,
+        GRID,
+        SEARCH,
+        SORT,
+        CLOCK,
+        DROPLET,
+        PIN,
+        CRAFT,
+        SLIDER,
+        TOGGLE,
+        GEAR
+    }
+
+    private record GuideTopic(GuideIcon icon, String titleKey, String[] lineKeys) {
+    }
+
+    private record GuidePanelRect(int x, int y, int w, int h) {
     }
 
     private record ShapeHistoryBatch(

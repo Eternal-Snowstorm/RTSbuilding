@@ -16,7 +16,8 @@ public record S2CRtsCameraStatePayload(
         double maxRadius,
         double heightOffset,
         float yawDeg,
-        float pitchDeg) implements CustomPacketPayload {
+        float pitchDeg,
+        boolean homeSelection) implements CustomPacketPayload {
     public static final Type<S2CRtsCameraStatePayload> TYPE = new Type<>(
             ResourceLocation.fromNamespaceAndPath(RtsbuildingMod.MODID, "s2c_rts_camera_state"));
 
@@ -31,6 +32,7 @@ public record S2CRtsCameraStatePayload(
                 buf.writeDouble(payload.heightOffset());
                 buf.writeFloat(payload.yawDeg());
                 buf.writeFloat(payload.pitchDeg());
+                buf.writeBoolean(payload.homeSelection());
             },
             (buf) -> new S2CRtsCameraStatePayload(
                     buf.readBoolean(),
@@ -41,7 +43,8 @@ public record S2CRtsCameraStatePayload(
                     buf.readDouble(),
                     buf.readDouble(),
                     buf.readFloat(),
-                    buf.readFloat()));
+                    buf.readFloat(),
+                    buf.readBoolean()));
 
     @Override
     public Type<? extends CustomPacketPayload> type() {

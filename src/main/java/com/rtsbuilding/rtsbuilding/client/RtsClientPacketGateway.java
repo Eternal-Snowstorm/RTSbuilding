@@ -1,6 +1,7 @@
 package com.rtsbuilding.rtsbuilding.client;
 
 import com.rtsbuilding.rtsbuilding.network.C2SRtsBreakPayload;
+import com.rtsbuilding.rtsbuilding.network.C2SRtsBeginHomeSelectionPayload;
 import com.rtsbuilding.rtsbuilding.network.C2SRtsCameraMovePayload;
 import com.rtsbuilding.rtsbuilding.network.C2SRtsCraftRecipePayload;
 import com.rtsbuilding.rtsbuilding.network.C2SRtsFillInventoryPayload;
@@ -14,17 +15,22 @@ import com.rtsbuilding.rtsbuilding.network.C2SRtsPlaceFluidPayload;
 import com.rtsbuilding.rtsbuilding.network.C2SRtsPlacePayload;
 import com.rtsbuilding.rtsbuilding.network.C2SRtsQuestDetectPayload;
 import com.rtsbuilding.rtsbuilding.network.C2SRtsQuickDropPayload;
+import com.rtsbuilding.rtsbuilding.network.C2SRtsRequestProgressionStatePayload;
 import com.rtsbuilding.rtsbuilding.network.C2SRtsRequestCraftablesPayload;
 import com.rtsbuilding.rtsbuilding.network.C2SRtsRequestStoragePagePayload;
 import com.rtsbuilding.rtsbuilding.network.C2SRtsRotateBlockPayload;
+import com.rtsbuilding.rtsbuilding.network.C2SRtsSetHomePayload;
 import com.rtsbuilding.rtsbuilding.network.C2SRtsSetAutoStorePayload;
 import com.rtsbuilding.rtsbuilding.network.C2SRtsSetFunnelPayload;
 import com.rtsbuilding.rtsbuilding.network.C2SRtsSetGuiBindingPayload;
 import com.rtsbuilding.rtsbuilding.network.C2SRtsSetModePayload;
+import com.rtsbuilding.rtsbuilding.network.C2SRtsSetProgressionCostPayload;
 import com.rtsbuilding.rtsbuilding.network.C2SRtsSetQuickSlotPayload;
+import com.rtsbuilding.rtsbuilding.network.C2SRtsSetSurvivalProgressionPayload;
 import com.rtsbuilding.rtsbuilding.network.C2SRtsStoreFluidPayload;
 import com.rtsbuilding.rtsbuilding.network.C2SRtsStoreHotbarSlotPayload;
 import com.rtsbuilding.rtsbuilding.network.C2SRtsUltiminePayload;
+import com.rtsbuilding.rtsbuilding.network.C2SRtsUnlockProgressionNodePayload;
 import com.rtsbuilding.rtsbuilding.network.RtsStorageSort;
 
 import net.minecraft.core.BlockPos;
@@ -40,6 +46,30 @@ final class RtsClientPacketGateway {
 
     static void sendSetMode(BuilderMode mode) {
         PacketDistributor.sendToServer(new C2SRtsSetModePayload((byte) mode.ordinal()));
+    }
+
+    static void sendRequestProgressionState() {
+        PacketDistributor.sendToServer(new C2SRtsRequestProgressionStatePayload());
+    }
+
+    static void sendUnlockProgressionNode(net.minecraft.resources.ResourceLocation nodeId) {
+        PacketDistributor.sendToServer(new C2SRtsUnlockProgressionNodePayload(nodeId));
+    }
+
+    static void sendSetSurvivalProgression(boolean enabled) {
+        PacketDistributor.sendToServer(new C2SRtsSetSurvivalProgressionPayload(enabled));
+    }
+
+    static void sendSetProgressionCost(net.minecraft.resources.ResourceLocation nodeId, String costsText) {
+        PacketDistributor.sendToServer(new C2SRtsSetProgressionCostPayload(nodeId, costsText == null ? "" : costsText));
+    }
+
+    static void sendSetHome(BlockPos pos) {
+        PacketDistributor.sendToServer(new C2SRtsSetHomePayload(pos));
+    }
+
+    static void sendBeginHomeSelection() {
+        PacketDistributor.sendToServer(new C2SRtsBeginHomeSelectionPayload());
     }
 
     static void sendSetFunnelEnabled(boolean enabled) {
@@ -272,15 +302,16 @@ final class RtsClientPacketGateway {
                 allowAdjacentFallback));
     }
 
-    static void sendMineStart(BlockPos pos, int face, int toolSlot) {
-        PacketDistributor.sendToServer(new C2SRtsMinePayload(pos, (byte) face, true, (byte) Mth.clamp(toolSlot, 0, 8)));
+    static void sendMineStart(BlockPos pos, int face, int toolSlot, String toolItemId) {
+        PacketDistributor.sendToServer(new C2SRtsMinePayload(pos, (byte) face, true, (byte) Mth.clamp(toolSlot, 0, 8), toolItemId == null ? "" : toolItemId));
     }
 
-    static void sendUltimineStart(BlockPos pos, int face, int toolSlot, int limit) {
+    static void sendUltimineStart(BlockPos pos, int face, int toolSlot, String toolItemId, int limit) {
         PacketDistributor.sendToServer(new C2SRtsUltiminePayload(
                 pos,
                 (byte) face,
                 (byte) Mth.clamp(toolSlot, 0, 8),
+                toolItemId == null ? "" : toolItemId,
                 (short) Mth.clamp(limit, 1, 256)));
     }
 
@@ -289,6 +320,7 @@ final class RtsClientPacketGateway {
                 pos,
                 (byte) face,
                 false,
-                (byte) Mth.clamp(toolSlot, 0, 8)));
+                (byte) Mth.clamp(toolSlot, 0, 8),
+                ""));
     }
 }

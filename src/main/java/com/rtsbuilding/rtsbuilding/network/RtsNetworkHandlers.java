@@ -1,7 +1,10 @@
 package com.rtsbuilding.rtsbuilding.network;
 
+import com.rtsbuilding.rtsbuilding.Config;
 import com.rtsbuilding.rtsbuilding.client.ClientRtsController;
+import com.rtsbuilding.rtsbuilding.progression.RtsProgressionNodes;
 import com.rtsbuilding.rtsbuilding.server.RtsCameraManager;
+import com.rtsbuilding.rtsbuilding.server.RtsProgressionManager;
 import com.rtsbuilding.rtsbuilding.server.RtsStorageManager;
 
 import net.minecraft.core.Direction;
@@ -260,7 +263,7 @@ public final class RtsNetworkHandlers {
         context.enqueueWork(() -> {
             if (context.player() instanceof ServerPlayer serverPlayer) {
                 Direction face = Direction.from3DDataValue(payload.face());
-                RtsStorageManager.mine(serverPlayer, payload.pos(), face, payload.start(), payload.toolSlot());
+                RtsStorageManager.mine(serverPlayer, payload.pos(), face, payload.start(), payload.toolSlot(), payload.toolItemId());
             }
         });
     }
@@ -269,7 +272,7 @@ public final class RtsNetworkHandlers {
         context.enqueueWork(() -> {
             if (context.player() instanceof ServerPlayer serverPlayer) {
                 Direction face = Direction.from3DDataValue(payload.face());
-                RtsStorageManager.startUltimine(serverPlayer, payload.pos(), face, payload.toolSlot(), payload.limit());
+                RtsStorageManager.startUltimine(serverPlayer, payload.pos(), face, payload.toolSlot(), payload.toolItemId(), payload.limit());
             }
         });
     }
@@ -366,6 +369,60 @@ public final class RtsNetworkHandlers {
         });
     }
 
+    public static void handleUnlockProgressionNode(C2SRtsUnlockProgressionNodePayload payload, IPayloadContext context) {
+        context.enqueueWork(() -> {
+            if (context.player() instanceof ServerPlayer serverPlayer) {
+                RtsProgressionManager.unlockNode(serverPlayer, payload.nodeId()).notifyPlayer(serverPlayer);
+            }
+        });
+    }
+
+    public static void handleSetSurvivalProgression(C2SRtsSetSurvivalProgressionPayload payload, IPayloadContext context) {
+        context.enqueueWork(() -> {
+            if (context.player() instanceof ServerPlayer serverPlayer && serverPlayer.hasPermissions(2)) {
+                Config.setSurvivalProgressionEnabled(payload.enabled());
+                serverPlayer.server.getPlayerList().getPlayers().forEach(RtsProgressionManager::syncToPlayer);
+            }
+        });
+    }
+
+    public static void handleSetProgressionCost(C2SRtsSetProgressionCostPayload payload, IPayloadContext context) {
+        context.enqueueWork(() -> {
+            if (context.player() instanceof ServerPlayer serverPlayer
+                    && serverPlayer.hasPermissions(2)
+                    && RtsProgressionNodes.contains(payload.nodeId())) {
+                Config.setProgressionCostOverride(payload.nodeId().getPath(), payload.costsText());
+                serverPlayer.server.getPlayerList().getPlayers().forEach(RtsProgressionManager::syncToPlayer);
+            }
+        });
+    }
+
+    public static void handleSetHome(C2SRtsSetHomePayload payload, IPayloadContext context) {
+        context.enqueueWork(() -> {
+            if (context.player() instanceof ServerPlayer serverPlayer) {
+                if (RtsProgressionManager.commitHome(serverPlayer, payload.pos())) {
+                    RtsCameraManager.restartNormalFromHomeSelection(serverPlayer);
+                }
+            }
+        });
+    }
+
+    public static void handleBeginHomeSelection(C2SRtsBeginHomeSelectionPayload payload, IPayloadContext context) {
+        context.enqueueWork(() -> {
+            if (context.player() instanceof ServerPlayer serverPlayer) {
+                RtsCameraManager.startHomeSelectionFromPanel(serverPlayer);
+            }
+        });
+    }
+
+    public static void handleRequestProgressionState(C2SRtsRequestProgressionStatePayload payload, IPayloadContext context) {
+        context.enqueueWork(() -> {
+            if (context.player() instanceof ServerPlayer serverPlayer) {
+                RtsProgressionManager.syncToPlayer(serverPlayer);
+            }
+        });
+    }
+
     public static void handleCameraState(S2CRtsCameraStatePayload payload, IPayloadContext context) {
         context.enqueueWork(() -> ClientRtsController.get().applyServerCameraState(payload));
     }
@@ -388,5 +445,9 @@ public final class RtsNetworkHandlers {
 
     public static void handleMineProgress(S2CRtsMineProgressPayload payload, IPayloadContext context) {
         context.enqueueWork(() -> ClientRtsController.get().applyMineProgress(payload));
+    }
+
+    public static void handleProgressionState(S2CRtsProgressionStatePayload payload, IPayloadContext context) {
+        context.enqueueWork(() -> ClientRtsController.get().applyProgressionState(payload));
     }
 }

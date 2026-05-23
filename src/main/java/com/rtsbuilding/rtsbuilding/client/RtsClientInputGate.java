@@ -37,20 +37,21 @@ import org.lwjgl.glfw.GLFW;
 @EventBusSubscriber(modid = RtsbuildingMod.MODID, value = Dist.CLIENT, bus = EventBusSubscriber.Bus.GAME)
 public final class RtsClientInputGate {
     private static final int OVERLAY_MARGIN = 6;
-    private static final int CRAFT_PANEL_W = 106;
-    private static final int PANEL_GAP = 6;
-    private static final int STORAGE_PANEL_W = 212;
+    private static final int CRAFT_PANEL_W = 116;
+    private static final int CRAFT_PANEL_COLLAPSED_W = 44;
+    private static final int PANEL_GAP = 5;
+    private static final int STORAGE_PANEL_W = 196;
     private static final int OVERLAY_W = CRAFT_PANEL_W + PANEL_GAP + STORAGE_PANEL_W;
-    private static final int SLOT_PITCH = 20;
-    private static final int SLOT_SIZE = 18;
+    private static final int SLOT_PITCH = 18;
+    private static final int SLOT_SIZE = 16;
     private static final int COLS = 9;
     private static final int ROWS = 4;
     private static final int CRAFT_COLS = 4;
     private static final int CRAFT_SLOT = 18;
     private static final int CRAFT_PITCH = 20;
     private static final int CRAFT_SEARCH_H = 12;
-    private static final int CRAFT_APPLY_W = 16;
-    private static final int CRAFT_TOGGLE_W = 30;
+    private static final int CRAFT_APPLY_W = 18;
+    private static final int CRAFT_TOGGLE_W = 34;
     private static final int RETURN_SLOTS = 5;
     private static final int QUICKBAR_Y_OFF = 17;
     private static final int GRID_Y_OFF = QUICKBAR_Y_OFF + SLOT_SIZE + 6;
@@ -59,13 +60,16 @@ public final class RtsClientInputGate {
     private static final int OVERLAY_H = RETURN_Y_OFF + SLOT_SIZE + 6;
     private static final int OVERLAY_HEADER_Y = 3;
     private static final int OVERLAY_HEADER_H = 11;
-    private static final int OVERLAY_SORT_X = 40;
+    private static final int OVERLAY_SORT_X = 36;
     private static final int OVERLAY_DIR_X = OVERLAY_SORT_X + 14;
     private static final int OVERLAY_SEARCH_X = OVERLAY_DIR_X + 16;
     private static final int OVERLAY_SEARCH_CLEAR_W = 10;
     private static final int OVERLAY_SEARCH_MAX = 64;
     private static final int OVERLAY_DRAG_W = 32;
     private static final long RETURN_PREVIEW_MS = 2000L;
+    private static final int INVENTORY_RTS_BUTTON_W = 70;
+    private static final int INVENTORY_RTS_BUTTON_H = 14;
+    private static final int INVENTORY_RTS_BUTTON_GAP = 4;
 
     private static String pendingOverlayCarriedItemId = "";
     private static boolean captureLeftRelease;
@@ -74,6 +78,7 @@ public final class RtsClientInputGate {
     private static String overlaySearchDraft = "";
     private static boolean overlayCraftSearchFocused;
     private static String overlayCraftSearchDraft = "";
+    private static boolean overlayCraftCollapsed;
     private static int overlayCraftScroll;
     private static int overlayLastCraftablesStorageRevision = -1;
     private static final RtsCraftQuantityDialog OVERLAY_CRAFT_DIALOG = new RtsCraftQuantityDialog();
@@ -136,6 +141,10 @@ public final class RtsClientInputGate {
             return;
         }
 
+        if (event.getScreen() instanceof InventoryScreen) {
+            renderInventoryRtsButtons(event.getGuiGraphics(), Minecraft.getInstance().font, event.getScreen(), event.getMouseX(), event.getMouseY());
+        }
+
         syncOverlayScreen(event.getScreen());
         ClientRtsController controller = ClientRtsController.get();
         if (!controller.canUseStorageOverlay()) {
@@ -148,13 +157,11 @@ public final class RtsClientInputGate {
         syncOverlaySearchDrafts(controller);
         syncOverlayCraftables(controller);
 
-        drawPanelFrame(g, layout.craftPanelX(), layout.panelY(), CRAFT_PANEL_W, OVERLAY_H, 0xBB141922, 0xFF637993, 0xFF0D1218);
+        drawPanelFrame(g, layout.craftPanelX(), layout.panelY(), layout.craftPanelW(), OVERLAY_H, 0xBB141922, 0xFF637993, 0xFF0D1218);
         renderOverlayCraftablesPanel(g, minecraft.font, event.getMouseX(), event.getMouseY(), layout, controller);
 
         drawPanelFrame(g, layout.storagePanelX(), layout.panelY(), STORAGE_PANEL_W, OVERLAY_H, 0xBB0F1116, 0xFF637993, 0xFF0D1218);
         drawMiniButton(g, minecraft.font, layout.dragX(), layout.headerY(), OVERLAY_DRAG_W, OVERLAY_HEADER_H, "MOVE");
-        g.drawString(minecraft.font, "RTS", layout.storagePanelX() + 44, layout.panelY() + 4, 0xFFFFFF);
-
         drawMiniButton(g, minecraft.font, layout.sortX(), layout.headerY(), 12, OVERLAY_HEADER_H, sortShort(controller.getStorageSort()));
         drawMiniButton(g, minecraft.font, layout.dirX(), layout.headerY(), 12, OVERLAY_HEADER_H,
                 controller.isStorageSortAscending() ? "A" : "D");
@@ -262,6 +269,13 @@ public final class RtsClientInputGate {
 
     @SubscribeEvent
     public static void onScreenMousePressed(ScreenEvent.MouseButtonPressed.Pre event) {
+        if (event.getButton() == GLFW.GLFW_MOUSE_BUTTON_LEFT
+                && event.getScreen() instanceof InventoryScreen
+                && handleInventoryRtsButtonClick(event.getScreen(), event.getMouseX(), event.getMouseY())) {
+            event.setCanceled(true);
+            return;
+        }
+
         if (!ClientRtsController.get().canUseStorageOverlay()) {
             return;
         }
@@ -313,7 +327,7 @@ public final class RtsClientInputGate {
                     return;
                 }
             }
-            if (!inside(mx, my, layout.panelX(), layout.panelY(), OVERLAY_W, OVERLAY_H)) {
+            if (!inside(mx, my, layout.panelX(), layout.panelY(), layout.panelW(), OVERLAY_H)) {
                 clearOverlaySearchFocus();
                 return;
             }
@@ -518,11 +532,11 @@ public final class RtsClientInputGate {
         }
 
         OverlayLayout layout = resolveOverlayLayout(event.getScreen());
-        if (!inside(event.getMouseX(), event.getMouseY(), layout.panelX(), layout.panelY(), OVERLAY_W, OVERLAY_H)) {
+        if (!inside(event.getMouseX(), event.getMouseY(), layout.panelX(), layout.panelY(), layout.panelW(), OVERLAY_H)) {
             return;
         }
 
-        if (inside(event.getMouseX(), event.getMouseY(), layout.craftPanelX(), layout.panelY(), CRAFT_PANEL_W, OVERLAY_H)) {
+        if (!overlayCraftCollapsed && inside(event.getMouseX(), event.getMouseY(), layout.craftPanelX(), layout.panelY(), layout.craftPanelW(), OVERLAY_H)) {
             int maxScroll = maxOverlayCraftScroll(ClientRtsController.get(), layout.craftVisibleRows());
             if (event.getScrollDeltaY() > 0.0D) {
                 overlayCraftScroll = Math.max(0, overlayCraftScroll - 1);
@@ -706,7 +720,7 @@ public final class RtsClientInputGate {
 
     private static int resolveOverlayX(int screenWidth) {
         int minX = OVERLAY_MARGIN;
-        int maxX = Math.max(minX, screenWidth - OVERLAY_W - OVERLAY_MARGIN);
+        int maxX = Math.max(minX, screenWidth - currentOverlayWidth() - OVERLAY_MARGIN);
         return minX + (int) Math.round((maxX - minX) * ClientRtsController.get().getStoragePanelXNormalized());
     }
 
@@ -720,10 +734,12 @@ public final class RtsClientInputGate {
         Minecraft minecraft = Minecraft.getInstance();
         int sw = minecraft.getWindow().getGuiScaledWidth();
         int sh = minecraft.getWindow().getGuiScaledHeight();
-        int panelX = Mth.clamp(resolveOverlayX(sw), OVERLAY_MARGIN, Math.max(OVERLAY_MARGIN, sw - OVERLAY_W - OVERLAY_MARGIN));
+        int panelW = currentOverlayWidth();
+        int craftPanelW = overlayCraftCollapsed ? CRAFT_PANEL_COLLAPSED_W : CRAFT_PANEL_W;
+        int panelX = Mth.clamp(resolveOverlayX(sw), OVERLAY_MARGIN, Math.max(OVERLAY_MARGIN, sw - panelW - OVERLAY_MARGIN));
         int panelY = Mth.clamp(resolveOverlayY(sh), OVERLAY_MARGIN, Math.max(OVERLAY_MARGIN, sh - OVERLAY_H - OVERLAY_MARGIN));
         int craftPanelX = panelX;
-        int storagePanelX = craftPanelX + CRAFT_PANEL_W + PANEL_GAP;
+        int storagePanelX = craftPanelX + craftPanelW + PANEL_GAP;
         int headerY = panelY + OVERLAY_HEADER_Y;
         int pageX = storagePanelX + STORAGE_PANEL_W - 58;
         int searchX = storagePanelX + OVERLAY_SEARCH_X;
@@ -731,7 +747,7 @@ public final class RtsClientInputGate {
         int clearX = searchX + searchW - OVERLAY_SEARCH_CLEAR_W;
         int craftSearchX = craftPanelX + 4;
         int craftSearchY = panelY + 15;
-        int craftSearchW = Math.max(24, CRAFT_PANEL_W - CRAFT_APPLY_W - CRAFT_TOGGLE_W - 16);
+        int craftSearchW = Math.max(24, craftPanelW - CRAFT_APPLY_W - CRAFT_TOGGLE_W - 16);
         int craftApplyX = craftSearchX + craftSearchW + 4;
         int craftToggleX = craftApplyX + CRAFT_APPLY_W + 4;
         int craftGridY = craftSearchY + CRAFT_SEARCH_H + 6;
@@ -739,7 +755,9 @@ public final class RtsClientInputGate {
         return new OverlayLayout(
                 panelX,
                 panelY,
+                panelW,
                 craftPanelX,
+                craftPanelW,
                 storagePanelX,
                 headerY,
                 pageX,
@@ -766,6 +784,11 @@ public final class RtsClientInputGate {
         g.vLine(x, y, y + h, 0xFF667D95);
         g.vLine(x + w, y, y + h, 0xFF111821);
         g.drawCenteredString(font, label, x + w / 2, y + 2, 0xFFFFFF);
+    }
+
+    private static int currentOverlayWidth() {
+        int craftW = overlayCraftCollapsed ? CRAFT_PANEL_COLLAPSED_W : CRAFT_PANEL_W;
+        return craftW + PANEL_GAP + STORAGE_PANEL_W;
     }
 
     private static String sortShort(RtsStorageSort sort) {
@@ -934,7 +957,7 @@ public final class RtsClientInputGate {
         int sw = minecraft.getWindow().getGuiScaledWidth();
         int sh = minecraft.getWindow().getGuiScaledHeight();
         int minX = OVERLAY_MARGIN;
-        int maxX = Math.max(minX, sw - OVERLAY_W - OVERLAY_MARGIN);
+        int maxX = Math.max(minX, sw - currentOverlayWidth() - OVERLAY_MARGIN);
         int minY = OVERLAY_MARGIN;
         int maxY = Math.max(minY, sh - OVERLAY_H - OVERLAY_MARGIN);
         int panelX = Mth.clamp((int) Math.round(mouseX - overlayDragOffsetX), minX, maxX);
@@ -966,7 +989,11 @@ public final class RtsClientInputGate {
             double mouseY,
             OverlayLayout layout,
             ClientRtsController controller) {
-        g.drawString(font, "Craft", layout.craftPanelX() + 5, layout.panelY() + 4, 0xEAF2FF);
+        String header = overlayCraftCollapsed ? "Craft +" : "Craft -";
+        g.drawString(font, trimToWidth(font, header, Math.max(8, layout.craftPanelW() - 8)), layout.craftPanelX() + 5, layout.panelY() + 4, 0xEAF2FF);
+        if (overlayCraftCollapsed) {
+            return;
+        }
 
         int searchBg = overlayCraftSearchFocused ? 0xAA304153 : 0xAA202731;
         drawPanelFrame(g, layout.craftSearchX(), layout.craftSearchY(), layout.craftSearchW(), CRAFT_SEARCH_H, searchBg, 0xFF5E738A, 0xFF111921);
@@ -1057,10 +1084,19 @@ public final class RtsClientInputGate {
     }
 
     private static boolean handleOverlayCraftLeftClick(double mouseX, double mouseY, OverlayLayout layout) {
-        if (!inside(mouseX, mouseY, layout.craftPanelX(), layout.panelY(), CRAFT_PANEL_W, OVERLAY_H)) {
+        if (!inside(mouseX, mouseY, layout.craftPanelX(), layout.panelY(), layout.craftPanelW(), OVERLAY_H)) {
             return false;
         }
         setOverlaySearchFocused(false);
+        if (inside(mouseX, mouseY, layout.craftPanelX() + 3, layout.panelY() + 2, Math.max(36, layout.craftPanelW() - 6), OVERLAY_HEADER_H + 2)) {
+            overlayCraftCollapsed = !overlayCraftCollapsed;
+            clearOverlaySearchFocus();
+            return true;
+        }
+        if (overlayCraftCollapsed) {
+            clearOverlaySearchFocus();
+            return true;
+        }
         if (inside(mouseX, mouseY, layout.craftSearchX(), layout.craftSearchY(), layout.craftSearchW(), CRAFT_SEARCH_H)) {
             setOverlayCraftSearchFocused(true);
             return true;
@@ -1080,8 +1116,11 @@ public final class RtsClientInputGate {
     }
 
     private static boolean handleOverlayCraftRightClick(double mouseX, double mouseY, OverlayLayout layout) {
-        if (!inside(mouseX, mouseY, layout.craftPanelX(), layout.panelY(), CRAFT_PANEL_W, OVERLAY_H)) {
+        if (!inside(mouseX, mouseY, layout.craftPanelX(), layout.panelY(), layout.craftPanelW(), OVERLAY_H)) {
             return false;
+        }
+        if (overlayCraftCollapsed) {
+            return true;
         }
         int index = resolveOverlayCraftableEntryIndex(mouseX, mouseY, layout);
         if (index < 0 || index >= ClientRtsController.get().getCraftableEntries().size()) {
@@ -1229,8 +1268,49 @@ public final class RtsClientInputGate {
         return screen instanceof InventoryScreen || screen instanceof CraftingScreen;
     }
 
+    private static void renderInventoryRtsButtons(GuiGraphics g, Font font, Screen screen, double mouseX, double mouseY) {
+        ButtonLayout progression = inventoryProgressionButton(screen);
+        ButtonLayout home = inventoryHomeButton(screen);
+        drawMiniButton(g, font, progression.x(), progression.y(), progression.w(), progression.h(), "RTS Progress");
+        drawMiniButton(g, font, home.x(), home.y(), home.w(), home.h(), "RTS Home");
+    }
+
+    private static boolean handleInventoryRtsButtonClick(Screen screen, double mouseX, double mouseY) {
+        Minecraft minecraft = Minecraft.getInstance();
+        ButtonLayout progression = inventoryProgressionButton(screen);
+        if (inside(mouseX, mouseY, progression.x(), progression.y(), progression.w(), progression.h())) {
+            minecraft.setScreen(new RtsProgressionScreen(screen));
+            return true;
+        }
+        ButtonLayout home = inventoryHomeButton(screen);
+        if (inside(mouseX, mouseY, home.x(), home.y(), home.w(), home.h())) {
+            minecraft.setScreen(new RtsHomeScreen(screen));
+            return true;
+        }
+        return false;
+    }
+
+    private static ButtonLayout inventoryProgressionButton(Screen screen) {
+        int totalW = INVENTORY_RTS_BUTTON_W * 2 + INVENTORY_RTS_BUTTON_GAP;
+        int x = Math.max(4, (screen.width - totalW) / 2);
+        int y = 4;
+        return new ButtonLayout(x, y, INVENTORY_RTS_BUTTON_W, INVENTORY_RTS_BUTTON_H);
+    }
+
+    private static ButtonLayout inventoryHomeButton(Screen screen) {
+        ButtonLayout progression = inventoryProgressionButton(screen);
+        return new ButtonLayout(
+                progression.x() + progression.w() + INVENTORY_RTS_BUTTON_GAP,
+                progression.y(),
+                INVENTORY_RTS_BUTTON_W,
+                INVENTORY_RTS_BUTTON_H);
+    }
+
     private static boolean inside(double mouseX, double mouseY, int x, int y, int w, int h) {
         return mouseX >= x && mouseX <= x + w && mouseY >= y && mouseY <= y + h;
+    }
+
+    private record ButtonLayout(int x, int y, int w, int h) {
     }
 
     private static String compactCount(long value) {
@@ -1421,7 +1501,9 @@ public final class RtsClientInputGate {
     private record OverlayLayout(
             int panelX,
             int panelY,
+            int panelW,
             int craftPanelX,
+            int craftPanelW,
             int storagePanelX,
             int headerY,
             int pageX,

@@ -20,10 +20,13 @@ group = mod_group_id
 repositories {
     // Add here additional repositories if required by some of the dependencies below.
     maven { url = 'https://maven.blamejared.com' }
+    maven { url = 'https://maven.createmod.net' }
+    maven { url = 'https://maven.ithundxr.dev/snapshots' }
+    maven { url = 'https://api.modrinth.com/maven' }
 }
 
 base {
-    archivesName = mod_id
+    archivesName = providers.gradleProperty('mod_archive_name').getOrElse(mod_id)
 }
 
 // Mojang ships Java 21 to end users in 1.21.x, so mods should target Java 21.
@@ -110,6 +113,7 @@ sourceSets.main.resources { srcDir 'src/generated/resources' }
 // "optional", meaning it will not be pulled by dependents of this mod.
 configurations {
     runtimeClasspath.extendsFrom localRuntime
+    additionalRuntimeClasspath.extendsFrom localRuntime
 }
 
 dependencies {
@@ -117,6 +121,19 @@ dependencies {
     compileOnly "mezz.jei:jei-${jei_minecraft_version}-common-api:${jei_version}"
     compileOnly "mezz.jei:jei-${jei_minecraft_version}-neoforge-api:${jei_version}"
     localRuntime "mezz.jei:jei-${jei_minecraft_version}-neoforge:${jei_version}"
+
+    // Runtime-only test pack. These mods are loaded by runClient/runServer for compatibility
+    // testing, but RTS building does not require them in published builds.
+    localRuntime("com.simibubi.create:create-${minecraft_version}:${create_version}:slim") {
+        transitive = false
+    }
+    localRuntime "net.createmod.ponder:ponder-neoforge:${ponder_version}+mc${minecraft_version}"
+    compileOnly "dev.engine-room.flywheel:flywheel-neoforge-api-${minecraft_version}:${flywheel_version}"
+    localRuntime "dev.engine-room.flywheel:flywheel-neoforge-${minecraft_version}:${flywheel_version}"
+    localRuntime "com.tterrag.registrate:Registrate:${registrate_version}"
+    localRuntime "maven.modrinth:sophisticated-core:${sophisticated_core_version}"
+    localRuntime "maven.modrinth:sophisticated-storage:${sophisticated_storage_version}"
+    localRuntime "maven.modrinth:pipez:${pipez_version}"
 
     // Example mod dependency using a mod jar from ./libs with a flat dir repository
     // This maps to ./libs/coolmod-${mc_version}-${coolmod_version}.jar

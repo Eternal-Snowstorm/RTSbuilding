@@ -102,7 +102,14 @@ final class RtsClientRemoteMenuCompat {
     }
 
     private static boolean isScreenMenuPairSafe(Screen screen, AbstractContainerMenu menu) {
-        if (screen == null || menu == null || !isInstanceOf(screen, STORAGE_SCREEN_BASE_CLASS)) {
+        if (screen == null || menu == null) {
+            return true;
+        }
+        String screenClassName = screen.getClass().getName();
+        if (!screenClassName.startsWith("net.p3pp3rf1y.sophisticated")) {
+            return true;
+        }
+        if (!isInstanceOf(screen, STORAGE_SCREEN_BASE_CLASS)) {
             return true;
         }
         return RtsSophisticatedStorageCompat.isStorageContainerMenuBase(menu);
@@ -111,8 +118,10 @@ final class RtsClientRemoteMenuCompat {
     private static boolean isInstanceOf(Object instance, String className) {
         try {
             return Class.forName(className).isInstance(instance);
-        } catch (ClassNotFoundException ignored) {
-            return true;
+        } catch (ClassNotFoundException | LinkageError ignored) {
+            // Optional mod client classes can fail to resolve in dev/remapped runtimes.
+            // In that case fail open: the compatibility guard must not close vanilla menus.
+            return false;
         }
     }
 

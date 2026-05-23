@@ -20,7 +20,7 @@ import net.minecraft.world.item.ItemStack;
 
 final class RtsOverlayJeiGlobalGuiHandler implements IGlobalGuiHandler {
     private static final int OVERLAY_MARGIN = 6;
-    private static final int CRAFT_PANEL_W = 106;
+    private static final int CRAFT_PANEL_W = 126;
     private static final int PANEL_GAP = 6;
     private static final int STORAGE_PANEL_W = 212;
     private static final int OVERLAY_W = CRAFT_PANEL_W + PANEL_GAP + STORAGE_PANEL_W;

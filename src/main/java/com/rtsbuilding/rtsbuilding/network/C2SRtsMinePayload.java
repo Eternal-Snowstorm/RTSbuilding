@@ -12,7 +12,8 @@ public record C2SRtsMinePayload(
         BlockPos pos,
         byte face,
         boolean start,
-        byte toolSlot) implements CustomPacketPayload {
+        byte toolSlot,
+        String toolItemId) implements CustomPacketPayload {
     public static final Type<C2SRtsMinePayload> TYPE = new Type<>(
             ResourceLocation.fromNamespaceAndPath(RtsbuildingMod.MODID, "c2s_rts_mine"));
 
@@ -22,12 +23,14 @@ public record C2SRtsMinePayload(
                 buf.writeByte(payload.face());
                 buf.writeBoolean(payload.start());
                 buf.writeByte(payload.toolSlot());
+                buf.writeUtf(payload.toolItemId() == null ? "" : payload.toolItemId(), 256);
             },
             (buf) -> new C2SRtsMinePayload(
                     buf.readBlockPos(),
                     buf.readByte(),
                     buf.readBoolean(),
-                    buf.readByte()));
+                    buf.readByte(),
+                    buf.readUtf(256)));
 
     @Override
     public Type<? extends CustomPacketPayload> type() {

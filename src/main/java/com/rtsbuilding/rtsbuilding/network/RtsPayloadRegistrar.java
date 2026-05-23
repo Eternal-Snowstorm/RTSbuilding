@@ -176,6 +176,36 @@ public final class RtsPayloadRegistrar {
                 C2SRtsQuestDetectPayload.STREAM_CODEC,
                 RtsNetworkHandlers::handleQuestDetect);
 
+        registrar.playToServer(
+                C2SRtsUnlockProgressionNodePayload.TYPE,
+                C2SRtsUnlockProgressionNodePayload.STREAM_CODEC,
+                RtsNetworkHandlers::handleUnlockProgressionNode);
+
+        registrar.playToServer(
+                C2SRtsSetSurvivalProgressionPayload.TYPE,
+                C2SRtsSetSurvivalProgressionPayload.STREAM_CODEC,
+                RtsNetworkHandlers::handleSetSurvivalProgression);
+
+        registrar.playToServer(
+                C2SRtsSetProgressionCostPayload.TYPE,
+                C2SRtsSetProgressionCostPayload.STREAM_CODEC,
+                RtsNetworkHandlers::handleSetProgressionCost);
+
+        registrar.playToServer(
+                C2SRtsSetHomePayload.TYPE,
+                C2SRtsSetHomePayload.STREAM_CODEC,
+                RtsNetworkHandlers::handleSetHome);
+
+        registrar.playToServer(
+                C2SRtsBeginHomeSelectionPayload.TYPE,
+                C2SRtsBeginHomeSelectionPayload.STREAM_CODEC,
+                RtsNetworkHandlers::handleBeginHomeSelection);
+
+        registrar.playToServer(
+                C2SRtsRequestProgressionStatePayload.TYPE,
+                C2SRtsRequestProgressionStatePayload.STREAM_CODEC,
+                RtsNetworkHandlers::handleRequestProgressionState);
+
         registrar.playToClient(
                 S2CRtsCameraStatePayload.TYPE,
                 S2CRtsCameraStatePayload.STREAM_CODEC,
@@ -205,5 +235,10 @@ public final class RtsPayloadRegistrar {
                 S2CRtsMineProgressPayload.TYPE,
                 S2CRtsMineProgressPayload.STREAM_CODEC,
                 RtsNetworkHandlers::handleMineProgress);
+
+        registrar.playToClient(
+                S2CRtsProgressionStatePayload.TYPE,
+                S2CRtsProgressionStatePayload.STREAM_CODEC,
+                RtsNetworkHandlers::handleProgressionState);
     }
 }

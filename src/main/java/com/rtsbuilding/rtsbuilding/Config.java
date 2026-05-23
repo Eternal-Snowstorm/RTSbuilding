@@ -1,6 +1,9 @@
 package com.rtsbuilding.rtsbuilding;
 
 import java.util.List;
+import java.util.ArrayList;
+import java.util.Map;
+import java.util.LinkedHashMap;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -34,10 +37,65 @@ public class Config {
             .comment("A list of items to log on common setup.")
             .defineListAllowEmpty("items", List.of("minecraft:iron_ingot"), () -> "", Config::validateItemName);
 
-    static final ModConfigSpec SPEC = BUILDER.build();
+    public static final ModConfigSpec.BooleanValue ENABLE_SURVIVAL_PROGRESSION = BUILDER
+            .comment("Enable RTS Building survival progression, feature unlocks, home anchors, and progression radius limits.")
+            .define("enableSurvivalProgression", false);
+
+    public static final ModConfigSpec.BooleanValue SHARE_SURVIVAL_PROGRESSION_WITH_TEAMS = BUILDER
+            .comment("When survival progression is enabled, share unlocked progression nodes and RTS home anchors with the player's FTB Team, or vanilla scoreboard team when FTB Teams is unavailable.")
+            .define("shareSurvivalProgressionWithTeams", false);
+
+    public static final ModConfigSpec.ConfigValue<List<? extends String>> PROGRESSION_COST_OVERRIDES = BUILDER
+            .comment("Skill material overrides. Format: node_path=minecraft:item:count,minecraft:item2:count. Example: ultimine=minecraft:diamond_pickaxe:1,minecraft:redstone_block:1")
+            .defineListAllowEmpty("progressionCostOverrides", List.of(), () -> "", obj -> obj instanceof String);
+
+    public static final ModConfigSpec SPEC = BUILDER.build();
 
     private static boolean validateItemName(final Object obj) {
         return obj instanceof String itemName && BuiltInRegistries.ITEM.containsKey(ResourceLocation.parse(itemName));
+    }
+
+    public static void setSurvivalProgressionEnabled(boolean enabled) {
+        ENABLE_SURVIVAL_PROGRESSION.set(enabled);
+        SPEC.save();
+    }
+
+    public static Map<String, String> progressionCostOverrides() {
+        Map<String, String> out = new LinkedHashMap<>();
+        for (String raw : PROGRESSION_COST_OVERRIDES.get()) {
+            if (raw == null) {
+                continue;
+            }
+            int split = raw.indexOf('=');
+            if (split <= 0) {
+                continue;
+            }
+            String node = raw.substring(0, split).trim();
+            String costs = raw.substring(split + 1).trim();
+            if (!node.isBlank()) {
+                out.put(node, costs);
+            }
+        }
+        return out;
+    }
+
+    public static void setProgressionCostOverride(String nodePath, String costsText) {
+        if (nodePath == null || nodePath.isBlank()) {
+            return;
+        }
+        Map<String, String> current = progressionCostOverrides();
+        String clean = costsText == null ? "" : costsText.trim();
+        if (clean.isBlank()) {
+            current.remove(nodePath);
+        } else {
+            current.put(nodePath, clean);
+        }
+        List<String> encoded = new ArrayList<>(current.size());
+        for (var entry : current.entrySet()) {
+            encoded.add(entry.getKey() + "=" + entry.getValue());
+        }
+        PROGRESSION_COST_OVERRIDES.set(encoded);
+        SPEC.save();
     }
 }
 

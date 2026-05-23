@@ -32,6 +32,7 @@ import com.rtsbuilding.rtsbuilding.network.C2SRtsStoreFluidPayload;
 import com.rtsbuilding.rtsbuilding.network.C2SRtsStoreHotbarSlotPayload;
 import com.rtsbuilding.rtsbuilding.network.C2SRtsSetGuiBindingPayload;
 import com.rtsbuilding.rtsbuilding.network.C2SRtsSetQuickSlotPayload;
+import com.rtsbuilding.rtsbuilding.network.C2SRtsToggleCameraPayload;
 import com.rtsbuilding.rtsbuilding.entity.RtsCameraEntity;
 import com.rtsbuilding.rtsbuilding.network.C2SRtsCameraMovePayload;
 import com.rtsbuilding.rtsbuilding.network.C2SRtsRequestStoragePagePayload;
@@ -43,8 +44,10 @@ import com.rtsbuilding.rtsbuilding.network.S2CRtsCameraStatePayload;
 import com.rtsbuilding.rtsbuilding.network.S2CRtsCraftablesPayload;
 import com.rtsbuilding.rtsbuilding.network.S2CRtsCraftFeedbackPayload;
 import com.rtsbuilding.rtsbuilding.network.S2CRtsMineProgressPayload;
+import com.rtsbuilding.rtsbuilding.network.S2CRtsProgressionStatePayload;
 import com.rtsbuilding.rtsbuilding.network.S2CRtsRemoteMenuHintPayload;
 import com.rtsbuilding.rtsbuilding.network.S2CRtsStoragePagePayload;
+import com.rtsbuilding.rtsbuilding.progression.RtsProgressionNodes;
 
 import net.minecraft.client.CameraType;
 import net.minecraft.client.Minecraft;
@@ -57,6 +60,7 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.material.Fluid;
 import net.minecraft.world.inventory.CraftingMenu;
@@ -91,7 +95,8 @@ public final class ClientRtsController {
     private static final float ROT_EMA_ALPHA = 0.28F;
     private static final float ROT_EMA_DECAY = 0.78F;
     private static final int RTS_MINE_RENDER_ID = 0x525453;
-    private static final int REMOTE_MENU_OPEN_GRACE_TICKS = 20;
+    private static final int REMOTE_MENU_OPEN_GRACE_TICKS = 80;
+    private static final int SCREENLESS_REMOTE_MENU_RECOVERY_TICKS = 10;
     private static final double MIN_CAMERA_HEIGHT_OFFSET = -5.0D;
     private static final double MAX_CAMERA_HEIGHT_OFFSET = 80.0D;
     private static final float MIN_CAMERA_PITCH = -90.0F;
@@ -113,6 +118,8 @@ public final class ClientRtsController {
     private double anchorY;
     private double anchorZ;
     private double maxRadius;
+    private boolean homeSelectionMode;
+    private boolean suppressBuilderScreenRestoreUntilRtsRestart;
 
     private boolean localStateReady;
     private double localX;
@@ -179,6 +186,7 @@ public final class ClientRtsController {
     private boolean pendingCraftTerminalOpen;
     private int pendingCraftTerminalOpenTicks;
     private int pendingRemoteMenuOpenTicks;
+    private int screenlessRemoteMenuTicks;
     private AbstractContainerMenu relaxedRemoteMenu;
     private boolean autoStoreMinedDrops = true;
     private final String[] quickSlotItemIds = new String[QUICK_SLOT_COUNT];
@@ -191,6 +199,17 @@ public final class ClientRtsController {
     private BlockPos lastFunnelTarget;
     private int funnelTargetCooldownTicks;
     private final List<FunnelBufferEntry> funnelBufferEntries = new ArrayList<>();
+    private boolean progressionEnabled;
+    private boolean progressionHomeSet;
+    private BlockPos progressionHomePos = BlockPos.ZERO;
+    private String progressionHomeDimension = "";
+    private long progressionHomeCooldownTicks;
+    private int progressionRadiusBlocks = 48;
+    private int progressionFluidCapacityBuckets = 100;
+    private int progressionUltimineLimit = 256;
+    private boolean progressionBypassHomeRadius;
+    private final Set<String> unlockedProgressionNodes = new HashSet<>();
+    private final Set<String> unlockableProgressionNodes = new HashSet<>();
     private double storagePanelXNormalized;
     private double storagePanelYNormalized;
     private double storagePanelWidthNormalized;
@@ -249,6 +268,54 @@ public final class ClientRtsController {
 
     public boolean hasBounds() {
         return enabled && maxRadius > 0.0D;
+    }
+
+    public boolean isHomeSelectionMode() {
+        return this.homeSelectionMode;
+    }
+
+    public boolean isProgressionEnabled() {
+        return this.progressionEnabled;
+    }
+
+    public boolean isProgressionHomeSet() {
+        return this.progressionHomeSet;
+    }
+
+    public BlockPos getProgressionHomePos() {
+        return this.progressionHomePos;
+    }
+
+    public String getProgressionHomeDimension() {
+        return this.progressionHomeDimension;
+    }
+
+    public long getProgressionHomeCooldownTicks() {
+        return this.progressionHomeCooldownTicks;
+    }
+
+    public int getProgressionRadiusBlocks() {
+        return this.progressionRadiusBlocks;
+    }
+
+    public int getProgressionFluidCapacityBuckets() {
+        return this.progressionFluidCapacityBuckets;
+    }
+
+    public int getProgressionUltimineLimit() {
+        return this.progressionUltimineLimit;
+    }
+
+    public boolean isProgressionBypassHomeRadius() {
+        return this.progressionBypassHomeRadius;
+    }
+
+    public Set<String> getUnlockedProgressionNodes() {
+        return Collections.unmodifiableSet(this.unlockedProgressionNodes);
+    }
+
+    public Set<String> getUnlockableProgressionNodes() {
+        return Collections.unmodifiableSet(this.unlockableProgressionNodes);
     }
 
     public BuilderMode getMode() {
@@ -551,6 +618,23 @@ public final class ClientRtsController {
         return String.format(Locale.ROOT, "x%.2f", getInputSensitivityScale());
     }
 
+    public int getInputSensitivityIndex() {
+        if (this.inputSensitivityIndex < 0 || this.inputSensitivityIndex >= INPUT_SENS_PRESETS.length) {
+            this.inputSensitivityIndex = INPUT_SENS_DEFAULT_INDEX;
+        }
+        return this.inputSensitivityIndex;
+    }
+
+    public int getInputSensitivityPresetCount() {
+        return INPUT_SENS_PRESETS.length;
+    }
+
+    public void setInputSensitivityByFraction(double fraction) {
+        double clamped = Mth.clamp(fraction, 0.0D, 1.0D);
+        int next = (int) Math.round(clamped * (INPUT_SENS_PRESETS.length - 1));
+        this.inputSensitivityIndex = Mth.clamp(next, 0, INPUT_SENS_PRESETS.length - 1);
+    }
+
     public void cycleInputSensitivity() {
         this.inputSensitivityIndex = (this.inputSensitivityIndex + 1) % INPUT_SENS_PRESETS.length;
     }
@@ -603,6 +687,7 @@ public final class ClientRtsController {
             this.anchorY = payload.anchorY();
             this.anchorZ = payload.anchorZ();
             this.maxRadius = payload.maxRadius();
+            this.homeSelectionMode = payload.homeSelection();
 
             if (freshEnable) {
                 this.previousCameraEntity = minecraft.getCameraEntity();
@@ -671,6 +756,7 @@ public final class ClientRtsController {
             this.pendingCraftTerminalOpen = false;
             this.pendingCraftTerminalOpenTicks = 0;
             this.pendingRemoteMenuOpenTicks = 0;
+            this.screenlessRemoteMenuTicks = 0;
             clearRemoteMenuValidationState();
             clearQuickSlotsLocal();
             clearGuiBindingsLocal();
@@ -684,6 +770,7 @@ public final class ClientRtsController {
         this.enabled = false;
         this.serverCameraEntityId = -1;
         this.localStateReady = false;
+        this.homeSelectionMode = false;
         this.funnelEnabled = false;
         this.lastFunnelTarget = null;
         this.funnelTargetCooldownTicks = 0;
@@ -691,6 +778,7 @@ public final class ClientRtsController {
         this.pendingCraftTerminalOpen = false;
         this.pendingCraftTerminalOpenTicks = 0;
         this.pendingRemoteMenuOpenTicks = 0;
+        this.screenlessRemoteMenuTicks = 0;
         clearRemoteMenuValidationState();
 
         if (this.rotateCaptured) {
@@ -748,10 +836,14 @@ public final class ClientRtsController {
     public void tick() {
         Minecraft minecraft = Minecraft.getInstance();
         if (!this.enabled) {
+            this.suppressBuilderScreenRestoreUntilRtsRestart = false;
             return;
         }
 
         if (minecraft.player == null || minecraft.level == null) {
+            return;
+        }
+        if (handleDeathScreenHandoff(minecraft)) {
             return;
         }
 
@@ -761,6 +853,21 @@ public final class ClientRtsController {
 
         boolean hasRemoteMenuOpen = minecraft.player.containerMenu != null
                 && minecraft.player.containerMenu.containerId != 0;
+
+        if (hasRemoteMenuOpen
+                && minecraft.screen == null
+                && this.pendingRemoteMenuOpenTicks <= 0) {
+            this.screenlessRemoteMenuTicks++;
+            if (this.screenlessRemoteMenuTicks >= SCREENLESS_REMOTE_MENU_RECOVERY_TICKS) {
+                minecraft.player.closeContainer();
+                clearRemoteMenuValidationState();
+                this.relaxedRemoteMenu = null;
+                hasRemoteMenuOpen = false;
+                this.screenlessRemoteMenuTicks = 0;
+            }
+        } else {
+            this.screenlessRemoteMenuTicks = 0;
+        }
 
         if (this.pendingCraftTerminalOpen
                 && minecraft.player.containerMenu instanceof CraftingMenu pendingMenu
@@ -812,7 +919,10 @@ public final class ClientRtsController {
             this.relaxedRemoteMenu = null;
         }
 
-        if (minecraft.screen == null && !hasRemoteMenuOpen && this.pendingRemoteMenuOpenTicks <= 0) {
+        if (minecraft.screen == null
+                && !this.suppressBuilderScreenRestoreUntilRtsRestart
+                && !hasRemoteMenuOpen
+                && this.pendingRemoteMenuOpenTicks <= 0) {
             minecraft.setScreen(new BuilderScreen(this));
         }
 
@@ -887,6 +997,49 @@ public final class ClientRtsController {
         this.pendingRawRotateY = 0.0F;
 
         this.syncVisualCameraFrame();
+    }
+
+    private boolean handleDeathScreenHandoff(Minecraft minecraft) {
+        boolean dead = !minecraft.player.isAlive() || minecraft.player.isDeadOrDying();
+        if (!dead) {
+            return false;
+        }
+
+        this.suppressBuilderScreenRestoreUntilRtsRestart = true;
+        this.homeSelectionMode = false;
+        this.pendingCraftTerminalOpen = false;
+        this.pendingCraftTerminalOpenTicks = 0;
+        this.pendingRemoteMenuOpenTicks = 0;
+        this.screenlessRemoteMenuTicks = 0;
+        this.activeMinePos = null;
+        this.activeMineFace = -1;
+        if (minecraft.level != null && this.mineRenderPos != null) {
+            minecraft.level.destroyBlockProgress(RTS_MINE_RENDER_ID, this.mineRenderPos, -1);
+        }
+        this.mineRenderPos = null;
+        this.mineRenderStage = -1;
+        clearRemoteMenuValidationState();
+
+        if (minecraft.screen instanceof BuilderScreen
+                || minecraft.screen instanceof RtsHomeScreen
+                || minecraft.screen instanceof RtsProgressionScreen
+                || minecraft.screen instanceof RtsCraftTerminalScreen) {
+            minecraft.setScreen(null);
+        }
+
+        Entity restore = this.previousCameraEntity != null ? this.previousCameraEntity : minecraft.player;
+        minecraft.setCameraEntity(restore);
+        minecraft.options.setCameraType(this.previousCameraType);
+        minecraft.options.bobView().set(this.previousBobView);
+        minecraft.options.fovEffectScale().set(this.previousFovEffectScale);
+
+        this.enabled = false;
+        this.serverCameraEntityId = -1;
+        this.localStateReady = false;
+        this.previousCameraEntity = null;
+        this.localMirrorCamera = null;
+        PacketDistributor.sendToServer(new C2SRtsToggleCameraPayload());
+        return true;
     }
 
     public void queuePanDrag(double dragX, double dragY) {
@@ -1173,6 +1326,7 @@ public final class ClientRtsController {
 
         applyQuickSlotPayload(payload.quickSlotItemIds());
         applyGuiBindingPayload(payload.guiBindingLabels(), payload.guiBindingItemIds());
+        refreshSelectedItemPreviewFromStorage();
 
         this.funnelEnabled = payload.funnelEnabled();
         this.funnelBufferEntries.clear();
@@ -1193,6 +1347,19 @@ public final class ClientRtsController {
         this.storageRevision++;
         if (!this.storageLinked && this.linkedStoragePositions.isEmpty()) {
             clearCraftablesState();
+        }
+    }
+
+    private void refreshSelectedItemPreviewFromStorage() {
+        if (this.selectedItemId == null || this.selectedItemId.isBlank()) {
+            return;
+        }
+        for (StorageEntry entry : this.storageEntries) {
+            if (entry != null && this.selectedItemId.equals(entry.itemId())) {
+                this.selectedItemPreview = entry.stack().copy();
+                this.selectedItemPreview.setCount(1);
+                return;
+            }
         }
     }
 
@@ -1428,6 +1595,50 @@ public final class ClientRtsController {
         minecraft.level.destroyBlockProgress(RTS_MINE_RENDER_ID, pos, Math.min(9, stage));
         this.mineRenderPos = pos.immutable();
         this.mineRenderStage = Math.min(9, stage);
+    }
+
+    public void applyProgressionState(S2CRtsProgressionStatePayload payload) {
+        this.progressionEnabled = payload.enabled();
+        this.progressionHomeSet = payload.homeSet();
+        this.progressionHomePos = payload.homePos();
+        this.progressionHomeDimension = payload.homeDimension() == null ? "" : payload.homeDimension();
+        this.progressionHomeCooldownTicks = payload.homeCooldownTicks();
+        this.progressionRadiusBlocks = payload.radiusBlocks();
+        this.progressionFluidCapacityBuckets = payload.fluidCapacityBuckets();
+        this.progressionUltimineLimit = payload.ultimineLimit();
+        this.progressionBypassHomeRadius = payload.bypassHomeRadius();
+        this.unlockedProgressionNodes.clear();
+        this.unlockedProgressionNodes.addAll(payload.unlockedNodes());
+        this.unlockableProgressionNodes.clear();
+        this.unlockableProgressionNodes.addAll(payload.unlockableNodes());
+        RtsProgressionNodes.applySyncedCostOverrides(payload.costOverrides());
+    }
+
+    public void requestProgressionState() {
+        RtsClientPacketGateway.sendRequestProgressionState();
+    }
+
+    public void unlockProgressionNode(ResourceLocation nodeId) {
+        RtsClientPacketGateway.sendUnlockProgressionNode(nodeId);
+    }
+
+    public void setSurvivalProgressionEnabled(boolean enabled) {
+        RtsClientPacketGateway.sendSetSurvivalProgression(enabled);
+    }
+
+    public void setProgressionCost(ResourceLocation nodeId, String costsText) {
+        if (nodeId == null) {
+            return;
+        }
+        RtsClientPacketGateway.sendSetProgressionCost(nodeId, costsText);
+    }
+
+    public void setHome(BlockPos pos) {
+        RtsClientPacketGateway.sendSetHome(pos);
+    }
+
+    public void beginHomeSelection() {
+        RtsClientPacketGateway.sendBeginHomeSelection();
     }
 
     public void selectStorageEntry(int index) {
@@ -1727,7 +1938,7 @@ public final class ClientRtsController {
         this.activeMineToolSlot = Mth.clamp(toolSlot, 0, 8);
         this.mineRenderPos = this.activeMinePos;
         this.mineRenderStage = 0;
-        RtsClientPacketGateway.sendMineStart(this.activeMinePos, face, this.activeMineToolSlot);
+        RtsClientPacketGateway.sendMineStart(this.activeMinePos, face, this.activeMineToolSlot, selectedMiningToolItemId());
     }
 
     public void startUltimine(BlockPos pos, int face, int toolSlot, int limit) {
@@ -1739,7 +1950,7 @@ public final class ClientRtsController {
         this.activeMineToolSlot = Mth.clamp(toolSlot, 0, 8);
         this.mineRenderPos = this.activeMinePos;
         this.mineRenderStage = 0;
-        RtsClientPacketGateway.sendUltimineStart(this.activeMinePos, face, this.activeMineToolSlot, limit);
+        RtsClientPacketGateway.sendUltimineStart(this.activeMinePos, face, this.activeMineToolSlot, selectedMiningToolItemId(), limit);
     }
 
     public void continueMining(int toolSlot) {
@@ -1756,6 +1967,16 @@ public final class ClientRtsController {
         this.mineRenderStage = -1;
     }
 
+    private String selectedMiningToolItemId() {
+        if (this.selectedItemId == null || this.selectedItemId.isBlank() || this.selectedItemPreview == null || this.selectedItemPreview.isEmpty()) {
+            return "";
+        }
+        if (this.selectedItemPreview.getItem() instanceof BlockItem) {
+            return "";
+        }
+        return this.selectedItemId;
+    }
+
     public int getMineProgressStage() {
         return this.mineRenderStage;
     }
@@ -1766,6 +1987,7 @@ public final class ClientRtsController {
 
     private void beginRemoteMenuOpenGrace() {
         this.pendingRemoteMenuOpenTicks = Math.max(this.pendingRemoteMenuOpenTicks, REMOTE_MENU_OPEN_GRACE_TICKS);
+        this.screenlessRemoteMenuTicks = 0;
         RtsSophisticatedStorageCompat.beginClientRemoteMenuOpen();
     }
 

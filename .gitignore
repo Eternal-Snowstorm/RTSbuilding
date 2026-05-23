@@ -19,6 +19,7 @@ out
 # gradle
 build
 .gradle
+.gradle-user-home/
 
 # runtime
 eclipse

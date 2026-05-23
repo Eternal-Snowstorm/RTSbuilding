@@ -25,6 +25,7 @@ import com.rtsbuilding.rtsbuilding.client.BuilderMode;
 import com.rtsbuilding.rtsbuilding.compat.ae2.RtsAe2Compat;
 import com.rtsbuilding.rtsbuilding.compat.ftb.RtsFtbCompat;
 import com.rtsbuilding.rtsbuilding.compat.sophisticatedstorage.RtsSophisticatedStorageCompat;
+import com.rtsbuilding.rtsbuilding.progression.RtsFeature;
 import com.rtsbuilding.rtsbuilding.network.C2SRtsInteractPayload;
 import com.rtsbuilding.rtsbuilding.network.C2SRtsLinkStoragePayload;
 import com.rtsbuilding.rtsbuilding.network.C2SRtsStoreFluidPayload;
@@ -124,6 +125,10 @@ public final class RtsStorageManager {
     private static final String CATEGORY_TAB_PREFIX = "tab|";
 
     private static final String NBT_ROOT = "rtsbuilding_storage_session";
+    private static final String NBT_LINKED_ENTRIES = "linked_entries";
+    private static final String NBT_LINKED_ENTRY_POS = "pos";
+    private static final String NBT_LINKED_ENTRY_DIMENSION = "dimension";
+    private static final String NBT_LINKED_ENTRY_MODE = "mode";
     private static final String NBT_LINKED_POSITIONS = "linked_positions";
     private static final String NBT_LINKED_MODES = "linked_modes";
     private static final String NBT_LINKED_DIMENSION = "linked_dimension";
@@ -208,26 +213,48 @@ public final class RtsStorageManager {
             return;
         }
 
-        session.linkedPositions.clear();
+        session.linkedStorages.clear();
         session.linkedNames.clear();
         session.linkedModes.clear();
         byte[] linkedModes = root.getByteArray(NBT_LINKED_MODES);
-        for (long packedPos : root.getLongArray(NBT_LINKED_POSITIONS)) {
-            BlockPos pos = BlockPos.of(packedPos).immutable();
-            if (!session.linkedPositions.contains(pos)) {
-                session.linkedPositions.add(pos);
-            }
-        }
-        for (int i = 0; i < session.linkedPositions.size(); i++) {
-            byte linkMode = i < linkedModes.length ? linkedModes[i] : LINK_MODE_BIDIRECTIONAL;
-            session.linkedModes.put(session.linkedPositions.get(i), sanitizeLinkMode(linkMode));
+
+        ResourceKey<Level> legacyDimension = null;
+        String legacyDimensionId = root.getString(NBT_LINKED_DIMENSION);
+        if (!legacyDimensionId.isBlank()) {
+            legacyDimension = parseDimensionKey(legacyDimensionId);
         }
 
-        String dimensionId = root.getString(NBT_LINKED_DIMENSION);
-        if (!dimensionId.isBlank()) {
-            ResourceLocation key = ResourceLocation.tryParse(dimensionId);
-            if (key != null) {
-                session.linkedDimension = ResourceKey.create(Registries.DIMENSION, key);
+        ListTag linkedEntries = root.getList(NBT_LINKED_ENTRIES, Tag.TAG_COMPOUND);
+        if (!linkedEntries.isEmpty()) {
+            for (int i = 0; i < linkedEntries.size(); i++) {
+                CompoundTag linkedTag = linkedEntries.getCompound(i);
+                if (!linkedTag.contains(NBT_LINKED_ENTRY_POS, Tag.TAG_LONG)) {
+                    continue;
+                }
+                ResourceKey<Level> dimension = parseDimensionKey(linkedTag.getString(NBT_LINKED_ENTRY_DIMENSION));
+                if (dimension == null) {
+                    continue;
+                }
+                LinkedStorageRef ref = new LinkedStorageRef(
+                        dimension,
+                        BlockPos.of(linkedTag.getLong(NBT_LINKED_ENTRY_POS)).immutable());
+                if (!session.linkedStorages.contains(ref)) {
+                    session.linkedStorages.add(ref);
+                    session.linkedModes.put(ref, sanitizeLinkMode(linkedTag.getByte(NBT_LINKED_ENTRY_MODE)));
+                }
+            }
+        } else {
+            ResourceKey<Level> dimension = legacyDimension == null ? player.serverLevel().dimension() : legacyDimension;
+            long[] linkedPackedPositions = root.getLongArray(NBT_LINKED_POSITIONS);
+            for (int i = 0; i < linkedPackedPositions.length; i++) {
+                LinkedStorageRef ref = new LinkedStorageRef(
+                        dimension,
+                        BlockPos.of(linkedPackedPositions[i]).immutable());
+                if (!session.linkedStorages.contains(ref)) {
+                    session.linkedStorages.add(ref);
+                    byte linkMode = i < linkedModes.length ? linkedModes[i] : LINK_MODE_BIDIRECTIONAL;
+                    session.linkedModes.put(ref, sanitizeLinkMode(linkMode));
+                }
             }
         }
 
@@ -244,7 +271,7 @@ public final class RtsStorageManager {
             if (key == null || !BuiltInRegistries.FLUID.containsKey(key)) {
                 continue;
             }
-            session.internalFluidMb.put(fluidId, Math.min(amount, INTERNAL_FLUID_CAPACITY_MB));
+            session.internalFluidMb.put(fluidId, amount);
         }
 
         session.recentEntries.clear();
@@ -316,18 +343,33 @@ public final class RtsStorageManager {
     private static void saveSessionToPlayerNbt(ServerPlayer player, Session session) {
         CompoundTag root = new CompoundTag();
 
-        long[] linkedPacked = new long[session.linkedPositions.size()];
-        byte[] linkedModes = new byte[session.linkedPositions.size()];
-        for (int i = 0; i < session.linkedPositions.size(); i++) {
-            BlockPos pos = session.linkedPositions.get(i);
-            linkedPacked[i] = pos.asLong();
-            linkedModes[i] = sanitizeLinkMode(session.linkedModes.getOrDefault(pos, LINK_MODE_BIDIRECTIONAL));
+        ListTag linkedEntries = new ListTag();
+        long[] linkedPacked = new long[session.linkedStorages.size()];
+        byte[] linkedModes = new byte[session.linkedStorages.size()];
+        for (int i = 0; i < session.linkedStorages.size(); i++) {
+            LinkedStorageRef ref = session.linkedStorages.get(i);
+            if (ref == null || ref.pos() == null || ref.dimension() == null) {
+                continue;
+            }
+            byte linkMode = sanitizeLinkMode(session.linkedModes.getOrDefault(ref, LINK_MODE_BIDIRECTIONAL));
+            linkedPacked[i] = ref.pos().asLong();
+            linkedModes[i] = linkMode;
+
+            CompoundTag linkedTag = new CompoundTag();
+            linkedTag.putLong(NBT_LINKED_ENTRY_POS, ref.pos().asLong());
+            linkedTag.putString(NBT_LINKED_ENTRY_DIMENSION, ref.dimension().location().toString());
+            linkedTag.putByte(NBT_LINKED_ENTRY_MODE, linkMode);
+            linkedEntries.add(linkedTag);
         }
+        root.put(NBT_LINKED_ENTRIES, linkedEntries);
         root.putLongArray(NBT_LINKED_POSITIONS, linkedPacked);
         root.putByteArray(NBT_LINKED_MODES, linkedModes);
 
-        if (session.linkedDimension != null) {
-            root.putString(NBT_LINKED_DIMENSION, session.linkedDimension.location().toString());
+        if (!session.linkedStorages.isEmpty()) {
+            LinkedStorageRef first = session.linkedStorages.get(0);
+            if (first != null && first.dimension() != null) {
+                root.putString(NBT_LINKED_DIMENSION, first.dimension().location().toString());
+            }
         }
 
         ListTag fluidEntries = new ListTag();
@@ -415,6 +457,9 @@ public final class RtsStorageManager {
     }
 
     public static void setFunnelEnabled(ServerPlayer player, boolean enabled) {
+        if (enabled && !RtsProgressionManager.canUse(player, RtsFeature.FUNNEL)) {
+            return;
+        }
         Session session = getOrCreateSession(player);
         if (session.funnelEnabled == enabled) {
             return;
@@ -429,6 +474,9 @@ public final class RtsStorageManager {
     }
 
     public static void updateFunnelTarget(ServerPlayer player, BlockPos target) {
+        if (!RtsProgressionManager.canUse(player, RtsFeature.FUNNEL)) {
+            return;
+        }
         Session session = getOrCreateSession(player);
         if (!session.funnelEnabled || target == null) {
             return;
@@ -437,6 +485,9 @@ public final class RtsStorageManager {
     }
 
     public static void setAutoStoreMinedDrops(ServerPlayer player, boolean enabled) {
+        if (enabled && !RtsProgressionManager.canUse(player, RtsFeature.AUTO_STORE_MINED_DROPS)) {
+            return;
+        }
         Session session = getOrCreateSession(player);
         session.autoStoreMinedDrops = enabled;
         requestPage(player, session.page, session.search, session.category, session.sort, session.ascending);
@@ -448,6 +499,9 @@ public final class RtsStorageManager {
     }
 
     public static void linkStorage(ServerPlayer player, BlockPos pos, byte linkMode) {
+        if (!RtsProgressionManager.canUse(player, RtsFeature.LINK_STORAGE)) {
+            return;
+        }
         if (!canAccessWorldTarget(player, pos)) {
             return;
         }
@@ -455,6 +509,7 @@ public final class RtsStorageManager {
         Session session = getOrCreateSession(player);
         sanitizeSessionDimension(player, session);
 
+        LinkedStorageRef ref = new LinkedStorageRef(player.serverLevel().dimension(), pos.immutable());
         IItemHandler itemHandler = findLinkedItemHandler(player, pos);
         IFluidHandler fluidHandler = findFluidHandler(player, pos);
         if (itemHandler == null && fluidHandler == null) {
@@ -462,40 +517,36 @@ public final class RtsStorageManager {
             return;
         }
 
-        BlockPos immutable = pos.immutable();
         byte normalizedMode = sanitizeLinkMode(linkMode);
-        if (session.linkedPositions.contains(immutable)) {
-            byte existingMode = session.linkedModes.getOrDefault(immutable, LINK_MODE_BIDIRECTIONAL);
+        if (session.linkedStorages.contains(ref)) {
+            byte existingMode = session.linkedModes.getOrDefault(ref, LINK_MODE_BIDIRECTIONAL);
             if (existingMode == normalizedMode) {
-                session.linkedPositions.remove(immutable);
-                session.linkedNames.remove(immutable);
-                session.linkedModes.remove(immutable);
+                session.linkedStorages.remove(ref);
+                session.linkedNames.remove(ref);
+                session.linkedModes.remove(ref);
             } else {
-                session.linkedModes.put(immutable, normalizedMode);
-                session.linkedNames.put(immutable, resolveDisplayName(player, immutable));
-            }
-            if (session.linkedPositions.isEmpty()) {
-                session.linkedDimension = null;
+                session.linkedModes.put(ref, normalizedMode);
+                session.linkedNames.put(ref, resolveDisplayName(player.serverLevel(), ref.pos()));
             }
         } else {
-            if (session.linkedDimension == null) {
-                session.linkedDimension = player.serverLevel().dimension();
-            }
-            session.linkedPositions.add(immutable);
-            session.linkedNames.put(immutable, resolveDisplayName(player, immutable));
-            session.linkedModes.put(immutable, normalizedMode);
+            session.linkedStorages.add(ref);
+            session.linkedNames.put(ref, resolveDisplayName(player.serverLevel(), ref.pos()));
+            session.linkedModes.put(ref, normalizedMode);
         }
         saveSessionToPlayerNbt(player, session);
         requestPage(player, 0, session.search, session.category, session.sort, session.ascending);
     }
 
     public static void openCraftTerminal(ServerPlayer player) {
+        if (!RtsProgressionManager.canUse(player, RtsFeature.CRAFT_TERMINAL)) {
+            return;
+        }
         Session session = SESSIONS.get(player.getUUID());
         if (session == null) {
             return;
         }
         sanitizeSessionDimension(player, session);
-        if (session.linkedPositions.isEmpty()) {
+        if (session.linkedStorages.isEmpty()) {
             player.displayClientMessage(Component.literal("Link at least one storage first."), true);
             return;
         }
@@ -530,6 +581,9 @@ public final class RtsStorageManager {
     }
 
     public static void rotateBlock(ServerPlayer player, BlockPos pos) {
+        if (!RtsProgressionManager.canUse(player, RtsFeature.ROTATE_BLOCK)) {
+            return;
+        }
         Session session = SESSIONS.get(player.getUUID());
         if (session == null || !canAccessWorldTarget(player, pos)) {
             return;
@@ -543,7 +597,7 @@ public final class RtsStorageManager {
             return;
         }
         sanitizeSessionDimension(player, session);
-        if (session.linkedPositions.isEmpty()) {
+        if (session.linkedStorages.isEmpty()) {
             return;
         }
 
@@ -599,6 +653,9 @@ public final class RtsStorageManager {
     }
 
     public static void setGuiBinding(ServerPlayer player, byte slotId, boolean clear, BlockPos pos, Direction face, String itemIdHint) {
+        if (!clear && !RtsProgressionManager.canUse(player, RtsFeature.REMOTE_GUI_BINDING)) {
+            return;
+        }
         Session session = getOrCreateSession(player);
         int slot = slotId;
         if (!isValidGuiBindingSlot(slot)) {
@@ -628,7 +685,7 @@ public final class RtsStorageManager {
 
         String label = provider == null || provider.getDisplayName() == null ? "" : provider.getDisplayName().getString();
         if (label.isBlank()) {
-            label = resolveDisplayName(player, pos);
+            label = resolveDisplayName(level, pos);
         }
         String iconItemId = resolveGuiBindingIconItemId(level, pos, face, itemIdHint, label);
 
@@ -643,6 +700,9 @@ public final class RtsStorageManager {
     }
 
     public static void openGuiBinding(ServerPlayer player, byte slotId) {
+        if (!RtsProgressionManager.canUse(player, RtsFeature.REMOTE_GUI_BINDING)) {
+            return;
+        }
         Session session = SESSIONS.get(player.getUUID());
         if (session == null || !RtsCameraManager.isActive(player)) {
             return;
@@ -746,7 +806,7 @@ public final class RtsStorageManager {
             return 0L;
         }
         sanitizeSessionDimension(player, session);
-        if (session.linkedPositions.isEmpty()) {
+        if (session.linkedStorages.isEmpty()) {
             return 0L;
         }
 
@@ -770,6 +830,9 @@ public final class RtsStorageManager {
 
     public static void requestPage(ServerPlayer player, int page, String search, String category, RtsStorageSort sort,
             boolean ascending) {
+        if (!RtsProgressionManager.canUse(player, RtsFeature.STORAGE_BROWSER)) {
+            return;
+        }
         Session session = getOrCreateSession(player);
         refreshMissingGuiBindingIcons(player, session);
         session.search = search == null ? "" : search;
@@ -781,7 +844,7 @@ public final class RtsStorageManager {
 
         List<LinkedHandler> activeHandlers = resolveLinkedHandlers(player, session);
         List<LinkedFluidHandler> activeFluidHandlers = resolveLinkedFluidHandlers(player, session);
-        List<Long> linkedPackedPositions = toPackedPositions(session.linkedPositions);
+        List<Long> linkedPackedPositions = toPackedPositions(player, session.linkedStorages);
 
         Map<String, Long> counts = new HashMap<>();
         List<Entry> exactEntries = new ArrayList<>();
@@ -803,7 +866,7 @@ public final class RtsStorageManager {
                 namespaceTotals.merge(id.getNamespace(), reportedCount, Long::sum);
             }
         }
-        boolean includePlayerMainInventory = !session.linkedPositions.isEmpty()
+        boolean includePlayerMainInventory = !session.linkedStorages.isEmpty()
                 && !(player.containerMenu instanceof RtsCraftTerminalMenu);
         if (includePlayerMainInventory) {
             accumulatePlayerMainInventoryCounts(player, counts, namespaceTotals);
@@ -837,8 +900,9 @@ public final class RtsStorageManager {
             }
         }
 
+        long internalFluidCapacityMb = internalFluidCapacityMb(player);
         for (String fluidId : fluidAmounts.keySet()) {
-            fluidCapacities.merge(fluidId, INTERNAL_FLUID_CAPACITY_MB, Long::sum);
+            fluidCapacities.merge(fluidId, internalFluidCapacityMb, Long::sum);
             ResourceLocation rl = ResourceLocation.tryParse(fluidId);
             if (rl != null) {
                 namespaceTotals.merge(rl.getNamespace(), fluidAmounts.getOrDefault(fluidId, 0L), Long::sum);
@@ -917,7 +981,7 @@ public final class RtsStorageManager {
                 continue;
             }
             long amount = Math.max(0L, e.getValue());
-            long capacity = Math.max(amount, fluidCapacities.getOrDefault(id, INTERNAL_FLUID_CAPACITY_MB));
+            long capacity = Math.max(amount, fluidCapacities.getOrDefault(id, internalFluidCapacityMb));
             fluidEntries.add(new FluidEntry(id, namespace, path, amount, capacity));
         }
 
@@ -1011,7 +1075,7 @@ public final class RtsStorageManager {
         }
 
         PacketDistributor.sendToPlayer(player, new S2CRtsStoragePagePayload(
-                !session.linkedPositions.isEmpty(),
+                !session.linkedStorages.isEmpty(),
                 buildLinkedSummary(session),
                 linkedPackedPositions,
                 safePage,
@@ -1046,9 +1110,9 @@ public final class RtsStorageManager {
 
     private static void sendEmptyPage(ServerPlayer player, Session session) {
         PacketDistributor.sendToPlayer(player, new S2CRtsStoragePagePayload(
-                !session.linkedPositions.isEmpty(),
+                !session.linkedStorages.isEmpty(),
                 buildLinkedSummary(session),
-                toPackedPositions(session.linkedPositions),
+                toPackedPositions(player, session.linkedStorages),
                 0,
                 1,
                 0,
@@ -1078,6 +1142,9 @@ public final class RtsStorageManager {
     }
 
     public static void requestCraftables(ServerPlayer player, String search, boolean showUnavailable, int offset, int limit) {
+        if (!RtsProgressionManager.canUse(player, RtsFeature.CRAFT_TERMINAL)) {
+            return;
+        }
         Session session = getOrCreateSession(player);
         session.craftSearch = search == null ? "" : search.trim();
         session.craftShowUnavailable = showUnavailable;
@@ -1091,7 +1158,7 @@ public final class RtsStorageManager {
         }
 
         sanitizeSessionDimension(player, session);
-        if (session.linkedPositions.isEmpty()) {
+        if (session.linkedStorages.isEmpty()) {
             sendCraftables(player, session, List.of(), 0, false, false);
             return;
         }
@@ -1141,9 +1208,12 @@ public final class RtsStorageManager {
     }
 
     public static void craftRecipeToLinked(ServerPlayer player, String recipeId, int craftCount) {
+        if (!RtsProgressionManager.canUse(player, RtsFeature.CRAFT_TERMINAL)) {
+            return;
+        }
         Session session = getOrCreateSession(player);
         sanitizeSessionDimension(player, session);
-        if (session.linkedPositions.isEmpty()) {
+        if (session.linkedStorages.isEmpty()) {
             refreshCraftables(player, session);
             return;
         }
@@ -1178,7 +1248,7 @@ public final class RtsStorageManager {
             handlers.add(linked.handler());
         }
 
-        boolean includePlayerFallback = !session.linkedPositions.isEmpty()
+        boolean includePlayerFallback = !session.linkedStorages.isEmpty()
                 && !(player.containerMenu instanceof RtsCraftTerminalMenu);
         ItemStack previewResult = resolveCraftablePreviewResult(craftingRecipe, player);
         String resultLabel = previewResult.isEmpty() ? "item" : previewResult.getHoverName().getString();
@@ -1315,7 +1385,7 @@ public final class RtsStorageManager {
             }
         }
 
-        boolean includePlayerMainInventory = !session.linkedPositions.isEmpty()
+        boolean includePlayerMainInventory = !session.linkedStorages.isEmpty()
                 && !(player.containerMenu instanceof RtsCraftTerminalMenu);
         if (includePlayerMainInventory) {
             accumulatePlayerMainInventoryCounts(player, counts, new HashMap<>());
@@ -1728,6 +1798,9 @@ public final class RtsStorageManager {
             double hitZ, byte rotateSteps, boolean forcePlace, boolean skipIfOccupied, String itemId,
             double rayOriginX, double rayOriginY, double rayOriginZ,
             double rayDirX, double rayDirY, double rayDirZ) {
+        if (!RtsProgressionManager.canUse(player, RtsFeature.REMOTE_PLACE)) {
+            return;
+        }
         Session session = SESSIONS.get(player.getUUID());
         if (session == null || !canAccessWorldTarget(player, clickedPos)) {
             return;
@@ -1823,7 +1896,7 @@ public final class RtsStorageManager {
             return;
         }
 
-        if (session.linkedPositions.isEmpty()) {
+        if (session.linkedStorages.isEmpty()) {
             return;
         }
 
@@ -1914,6 +1987,9 @@ public final class RtsStorageManager {
     }
 
     public static void storeFluidFromContainer(ServerPlayer player, byte sourceType, byte toolSlot, String itemId) {
+        if (!RtsProgressionManager.canUse(player, RtsFeature.FLUID_HANDLING)) {
+            return;
+        }
         Session session = getOrCreateSession(player);
         if (!RtsCameraManager.isActive(player)) {
             return;
@@ -1944,6 +2020,9 @@ public final class RtsStorageManager {
             double hitZ, boolean forcePlace, String fluidId,
             double rayOriginX, double rayOriginY, double rayOriginZ,
             double rayDirX, double rayDirY, double rayDirZ) {
+        if (!RtsProgressionManager.canUse(player, RtsFeature.FLUID_HANDLING)) {
+            return;
+        }
         Session session = SESSIONS.get(player.getUUID());
         if (session == null || !canAccessFluidPlacementTarget(player, clickedPos)) {
             return;
@@ -2004,6 +2083,9 @@ public final class RtsStorageManager {
             double hitY, double hitZ, byte sourceType, byte toolSlot, String itemId,
             double rayOriginX, double rayOriginY, double rayOriginZ,
             double rayDirX, double rayDirY, double rayDirZ) {
+        if (!RtsProgressionManager.canUse(player, RtsFeature.INTERACT)) {
+            return;
+        }
         Session session = SESSIONS.get(player.getUUID());
         if (session == null || !RtsCameraManager.isActive(player)) {
             return;
@@ -2078,12 +2160,15 @@ public final class RtsStorageManager {
     }
 
     public static void returnCarriedToLinked(ServerPlayer player, String itemId, int amount) {
+        if (!RtsProgressionManager.canUse(player, RtsFeature.STORAGE_BROWSER)) {
+            return;
+        }
         Session session = SESSIONS.get(player.getUUID());
         if (session == null) {
             return;
         }
         sanitizeSessionDimension(player, session);
-        if (session.linkedPositions.isEmpty()) {
+        if (session.linkedStorages.isEmpty()) {
             return;
         }
         if (itemId == null || itemId.isBlank() || amount <= 0) {
@@ -2132,6 +2217,9 @@ public final class RtsStorageManager {
 
     public static void quickDropLinkedItem(ServerPlayer player, String itemId, byte amount, double dropX, double dropY,
             double dropZ) {
+        if (!RtsProgressionManager.canUse(player, RtsFeature.STORAGE_BROWSER)) {
+            return;
+        }
         Session session = SESSIONS.get(player.getUUID());
         if (session == null || !RtsCameraManager.isActive(player)) {
             return;
@@ -2163,7 +2251,9 @@ public final class RtsStorageManager {
 
         Vec3 dropPos = new Vec3(dropX, dropY, dropZ);
         BlockPos dropBlock = BlockPos.containing(dropPos);
-        if (!player.serverLevel().hasChunkAt(dropBlock) || !RtsCameraManager.isWithinActionRadius(player, dropBlock)) {
+        if (!player.serverLevel().hasChunkAt(dropBlock)
+                || !RtsCameraManager.isWithinActionRadius(player, dropBlock)
+                || !RtsProgressionManager.canAccessHomeRadius(player, dropBlock)) {
             refundToLinked(handlers, player, extracted);
             requestPage(player, session.page, session.search, session.category, session.sort, session.ascending);
             return;
@@ -2176,12 +2266,15 @@ public final class RtsStorageManager {
     }
 
     public static void importMenuSlotToLinked(ServerPlayer player, int menuSlot) {
+        if (!RtsProgressionManager.canUse(player, RtsFeature.CRAFT_TERMINAL)) {
+            return;
+        }
         Session session = SESSIONS.get(player.getUUID());
         if (session == null) {
             return;
         }
         sanitizeSessionDimension(player, session);
-        if (session.linkedPositions.isEmpty()) {
+        if (session.linkedStorages.isEmpty()) {
             return;
         }
 
@@ -2281,7 +2374,7 @@ public final class RtsStorageManager {
             return;
         }
         sanitizeSessionDimension(player, session);
-        if (session.linkedPositions.isEmpty()) {
+        if (session.linkedStorages.isEmpty()) {
             return;
         }
 
@@ -2304,6 +2397,9 @@ public final class RtsStorageManager {
             List<String> blueprintIds,
             String craftedItemId,
             int craftedCount) {
+        if (!RtsProgressionManager.canUse(player, RtsFeature.CRAFT_TERMINAL)) {
+            return;
+        }
         if (player == null || blueprintIds == null || blueprintIds.size() != 9) {
             return;
         }
@@ -2334,6 +2430,9 @@ public final class RtsStorageManager {
     }
 
     public static void applyJeiTransfer(ServerPlayer player, String recipeId, boolean maxTransfer, boolean clearGridFirst) {
+        if (!RtsProgressionManager.canUse(player, RtsFeature.JEI_TRANSFER)) {
+            return;
+        }
         Session session = getOrCreateSession(player);
         sanitizeSessionDimension(player, session);
         if (!(player.containerMenu instanceof CraftingMenu craftingMenu)) {
@@ -2634,12 +2733,15 @@ public final class RtsStorageManager {
     }
 
     public static void breakPlaced(ServerPlayer player, BlockPos pos, Direction face, boolean allowAdjacentFallback) {
+        if (!RtsProgressionManager.canUse(player, RtsFeature.REMOTE_BREAK)) {
+            return;
+        }
         Session session = SESSIONS.get(player.getUUID());
         if (session == null || !canAccessWorldTarget(player, pos)) {
             return;
         }
         sanitizeSessionDimension(player, session);
-        if (session.linkedPositions.isEmpty()) {
+        if (session.linkedStorages.isEmpty()) {
             return;
         }
         ServerLevel level = player.serverLevel();
@@ -2704,12 +2806,10 @@ public final class RtsStorageManager {
         }
 
         // If a linked storage block itself is broken, unlink it immediately.
-        if (session.linkedPositions.remove(targetPos)) {
-            session.linkedNames.remove(targetPos);
-            session.linkedModes.remove(targetPos);
-            if (session.linkedPositions.isEmpty()) {
-                session.linkedDimension = null;
-            }
+        LinkedStorageRef targetRef = new LinkedStorageRef(player.serverLevel().dimension(), targetPos);
+        if (session.linkedStorages.remove(targetRef)) {
+            session.linkedNames.remove(targetRef);
+            session.linkedModes.remove(targetRef);
             saveSessionToPlayerNbt(player, session);
         }
 
@@ -2757,12 +2857,15 @@ public final class RtsStorageManager {
     }
 
     public static void pickupLinkedToCarried(ServerPlayer player, ItemStack prototype, int amount) {
+        if (!RtsProgressionManager.canUse(player, RtsFeature.STORAGE_BROWSER)) {
+            return;
+        }
         Session session = SESSIONS.get(player.getUUID());
         if (session == null) {
             return;
         }
         sanitizeSessionDimension(player, session);
-        if (session.linkedPositions.isEmpty()) {
+        if (session.linkedStorages.isEmpty()) {
             return;
         }
         if (prototype == null || prototype.isEmpty() || amount <= 0) {
@@ -2807,12 +2910,15 @@ public final class RtsStorageManager {
     }
 
     public static void quickMoveLinkedItem(ServerPlayer player, ItemStack prototype) {
+        if (!RtsProgressionManager.canUse(player, RtsFeature.STORAGE_BROWSER)) {
+            return;
+        }
         Session session = SESSIONS.get(player.getUUID());
         if (session == null) {
             return;
         }
         sanitizeSessionDimension(player, session);
-        if (session.linkedPositions.isEmpty() || prototype == null || prototype.isEmpty()) {
+        if (session.linkedStorages.isEmpty() || prototype == null || prototype.isEmpty()) {
             return;
         }
 
@@ -2851,12 +2957,15 @@ public final class RtsStorageManager {
     }
 
     public static void fillPlayerInventoryFromLinked(ServerPlayer player) {
+        if (!RtsProgressionManager.canUse(player, RtsFeature.STORAGE_BROWSER)) {
+            return;
+        }
         Session session = SESSIONS.get(player.getUUID());
         if (session == null) {
             return;
         }
         sanitizeSessionDimension(player, session);
-        if (session.linkedPositions.isEmpty()) {
+        if (session.linkedStorages.isEmpty()) {
             return;
         }
 
@@ -2910,7 +3019,10 @@ public final class RtsStorageManager {
         }
     }
 
-    public static void mine(ServerPlayer player, BlockPos pos, Direction face, boolean start, byte toolSlot) {
+    public static void mine(ServerPlayer player, BlockPos pos, Direction face, boolean start, byte toolSlot, String toolItemId) {
+        if (start && !RtsProgressionManager.canUse(player, RtsFeature.REMOTE_BREAK)) {
+            return;
+        }
         Session session = SESSIONS.get(player.getUUID());
         if (session == null) {
             return;
@@ -2925,7 +3037,7 @@ public final class RtsStorageManager {
                 return;
             }
 
-            if (PlacedBlockTrackerData.get(player.serverLevel()).isPlaced(pos) && !session.linkedPositions.isEmpty()) {
+            if (PlacedBlockTrackerData.get(player.serverLevel()).isPlaced(pos) && !session.linkedStorages.isEmpty()) {
                 BlockState before = player.serverLevel().getBlockState(pos);
                 breakPlaced(player, pos, face, false);
                 BlockState after = player.serverLevel().getBlockState(pos);
@@ -2934,6 +3046,8 @@ public final class RtsStorageManager {
                     return;
                 }
             }
+            stopActiveMining(player, session);
+            session.miningLinkedTool = extractLinkedMiningTool(player, session, toolItemId);
             beginRemoteMining(player, session, pos, face, slot);
             return;
         }
@@ -2941,7 +3055,10 @@ public final class RtsStorageManager {
         stopActiveMining(player, session);
     }
 
-    public static void startUltimine(ServerPlayer player, BlockPos pos, Direction face, byte toolSlot, int requestedLimit) {
+    public static void startUltimine(ServerPlayer player, BlockPos pos, Direction face, byte toolSlot, String toolItemId, int requestedLimit) {
+        if (!RtsProgressionManager.canUse(player, RtsFeature.ULTIMINE)) {
+            return;
+        }
         Session session = SESSIONS.get(player.getUUID());
         if (session == null) {
             return;
@@ -2949,22 +3066,29 @@ public final class RtsStorageManager {
         sanitizeSessionDimension(player, session);
 
         int slot = clampHotbarSlot(toolSlot);
-        int limit = Math.max(1, Math.min(ULTIMINE_MAX_BLOCKS, requestedLimit));
-        Deque<BlockPos> targets = collectUltimineTargets(player, pos, slot, limit);
+        int progressionLimit = RtsProgressionManager.getUltimineLimit(player);
+        if (progressionLimit <= 0) {
+            return;
+        }
+        int limit = Math.max(1, Math.min(Math.min(ULTIMINE_MAX_BLOCKS, progressionLimit), requestedLimit));
+        ItemStack linkedTool = extractLinkedMiningTool(player, session, toolItemId);
+        Deque<BlockPos> targets = collectUltimineTargets(player, pos, slot, linkedTool, limit);
         if (targets.isEmpty()) {
+            refundLinkedMiningTool(player, session, linkedTool);
             stopActiveMining(player, session);
             return;
         }
 
         stopActiveMining(player, session);
-        session.miningQueue.clear();
-        session.miningQueue.addAll(targets);
+        session.miningLinkedTool = linkedTool;
+        session.ultimineTargets.clear();
+        session.ultimineTargets.addAll(targets);
         session.miningFace = face == null ? Direction.DOWN : face;
         session.miningToolSlot = slot;
-        startNextQueuedMining(player, session);
+        beginRemoteMining(player, session, targets.peekFirst(), face, slot);
     }
 
-    private static Deque<BlockPos> collectUltimineTargets(ServerPlayer player, BlockPos seed, int toolSlot, int limit) {
+    private static Deque<BlockPos> collectUltimineTargets(ServerPlayer player, BlockPos seed, int toolSlot, ItemStack linkedTool, int limit) {
         Deque<BlockPos> result = new ArrayDeque<>();
         if (!canAccessWorldTarget(player, seed)) {
             return result;
@@ -2972,7 +3096,7 @@ public final class RtsStorageManager {
 
         ServerLevel level = player.serverLevel();
         BlockState seedState = level.getBlockState(seed);
-        if (!isUltimineCandidate(player, seed, seedState, seedState, toolSlot)) {
+        if (!isUltimineCandidate(player, seed, seedState, seedState, toolSlot, linkedTool)) {
             return result;
         }
 
@@ -2984,7 +3108,7 @@ public final class RtsStorageManager {
         while (!frontier.isEmpty() && result.size() < limit) {
             BlockPos current = frontier.removeFirst();
             BlockState currentState = level.getBlockState(current);
-            if (!isUltimineCandidate(player, current, currentState, seedState, toolSlot)) {
+            if (!isUltimineCandidate(player, current, currentState, seedState, toolSlot, linkedTool)) {
                 continue;
             }
 
@@ -3008,14 +3132,15 @@ public final class RtsStorageManager {
             BlockPos pos,
             BlockState state,
             BlockState seedState,
-            int toolSlot) {
+            int toolSlot,
+            ItemStack linkedTool) {
         if (state.isAir() || state.getBlock() != seedState.getBlock() || state.getDestroySpeed(player.serverLevel(), pos) < 0.0F) {
             return false;
         }
         if (!canAccessWorldTarget(player, pos)) {
             return false;
         }
-        return computeRemoteDestroyStep(player, state, pos, toolSlot) > 0.0F;
+        return computeRemoteDestroyStep(player, state, pos, toolSlot, linkedTool) > 0.0F;
     }
 
     private static void beginRemoteMining(ServerPlayer player, Session session, BlockPos pos, Direction face, int toolSlot) {
@@ -3028,22 +3153,6 @@ public final class RtsStorageManager {
         session.miningToolSlot = clampHotbarSlot(toolSlot);
         session.miningProgress = 0.0F;
         session.miningStage = -1;
-    }
-
-    private static void startNextQueuedMining(ServerPlayer player, Session session) {
-        while (!session.miningQueue.isEmpty()) {
-            BlockPos next = session.miningQueue.removeFirst();
-            if (!canAccessWorldTarget(player, next)) {
-                continue;
-            }
-            BlockState state = player.serverLevel().getBlockState(next);
-            if (state.isAir() || state.getDestroySpeed(player.serverLevel(), next) < 0.0F) {
-                continue;
-            }
-            beginRemoteMining(player, session, next, session.miningFace, session.miningToolSlot);
-            return;
-        }
-        resetMiningState(session);
     }
 
     private static void tickActiveMining(ServerPlayer player, Session session) {
@@ -3063,7 +3172,7 @@ public final class RtsStorageManager {
             return;
         }
 
-        float step = computeRemoteDestroyStep(player, state, pos, session.miningToolSlot);
+        float step = computeRemoteDestroyStep(player, state, pos, session.miningToolSlot, session.miningLinkedTool);
         if (step <= 0.0F) {
             return;
         }
@@ -3080,26 +3189,46 @@ public final class RtsStorageManager {
             return;
         }
 
-        boolean broken = destroyMinedBlock(player, pos, session.miningToolSlot);
+        boolean broken = destroyMinedBlock(player, session, pos, session.miningToolSlot);
+        List<BlockPos> ultimineTargets = session.ultimineTargets.isEmpty()
+                ? List.of()
+                : new ArrayList<>(session.ultimineTargets);
         level.destroyBlockProgress(player.getId(), pos, -1);
         sendMineProgress(player, pos, -1);
-        Direction queuedFace = session.miningFace;
-        int queuedToolSlot = session.miningToolSlot;
-        resetMiningState(session);
 
-        if (broken && session.autoStoreMinedDrops) {
+        if (broken && !ultimineTargets.isEmpty()) {
+            for (BlockPos target : ultimineTargets) {
+                if (target.equals(pos) || !canAccessWorldTarget(player, target)) {
+                    continue;
+                }
+                BlockState targetState = level.getBlockState(target);
+                if (targetState.isAir() || targetState.getDestroySpeed(level, target) < 0.0F) {
+                    continue;
+                }
+                if (computeRemoteDestroyStep(player, targetState, target, session.miningToolSlot, session.miningLinkedTool) <= 0.0F) {
+                    continue;
+                }
+                destroyMinedBlock(player, session, target, session.miningToolSlot);
+            }
+        }
+
+        if (broken && session.autoStoreMinedDrops && RtsProgressionManager.canUse(player, RtsFeature.AUTO_STORE_MINED_DROPS)) {
             boolean absorbed = absorbNearbyDropsIntoLinked(player, pos, session);
+            if (!ultimineTargets.isEmpty()) {
+                for (BlockPos target : ultimineTargets) {
+                    if (!target.equals(pos)) {
+                        absorbed |= absorbNearbyDropsIntoLinked(player, target, session);
+                    }
+                }
+            }
             requestPage(player, session.page, session.search, session.category, session.sort, session.ascending);
             if (absorbed) {
                 runQuestDetect(player, session, false);
             }
         }
-
-        if (broken && !session.miningQueue.isEmpty()) {
-            session.miningFace = queuedFace;
-            session.miningToolSlot = queuedToolSlot;
-            startNextQueuedMining(player, session);
-        }
+        refundLinkedMiningTool(player, session, session.miningLinkedTool);
+        requestPage(player, session.page, session.search, session.category, session.sort, session.ascending);
+        resetMiningState(session);
     }
 
     private static void stopActiveMining(ServerPlayer player, Session session) {
@@ -3107,26 +3236,89 @@ public final class RtsStorageManager {
             player.serverLevel().destroyBlockProgress(player.getId(), session.miningPos, -1);
             sendMineProgress(player, session.miningPos, -1);
         }
-        session.miningQueue.clear();
+        refundLinkedMiningTool(player, session, session.miningLinkedTool);
+        requestPage(player, session.page, session.search, session.category, session.sort, session.ascending);
         resetMiningState(session);
     }
 
     private static void resetMiningState(Session session) {
         session.miningPos = null;
+        session.ultimineTargets.clear();
         session.miningFace = Direction.DOWN;
         session.miningProgress = 0.0F;
         session.miningStage = -1;
+        session.miningLinkedTool = ItemStack.EMPTY;
     }
 
-    private static float computeRemoteDestroyStep(ServerPlayer player, BlockState state, BlockPos pos, int toolSlot) {
+    private static float computeRemoteDestroyStep(ServerPlayer player, BlockState state, BlockPos pos, int toolSlot, ItemStack linkedTool) {
+        if (linkedTool != null && !linkedTool.isEmpty()) {
+            return withTemporaryOnGround(player, true, () -> withTemporaryMainHandItem(
+                    player,
+                    linkedTool,
+                    () -> removeMiningSpeedPenalty(player, state.getDestroyProgress(player, player.serverLevel(), pos))));
+        }
         return withTemporaryOnGround(player, true, () -> withTemporarySelectedSlot(
                 player,
                 toolSlot,
                 () -> removeMiningSpeedPenalty(player, state.getDestroyProgress(player, player.serverLevel(), pos))));
     }
 
-    private static boolean destroyMinedBlock(ServerPlayer player, BlockPos pos, int toolSlot) {
+    private static boolean destroyMinedBlock(ServerPlayer player, Session session, BlockPos pos, int toolSlot) {
+        if (session != null && session.miningLinkedTool != null && !session.miningLinkedTool.isEmpty()) {
+            MiningDestroyOutcome outcome = destroyBlockWithTemporaryMainHand(player, pos, session.miningLinkedTool);
+            session.miningLinkedTool = outcome.remainder();
+            return outcome.broken();
+        }
         return withTemporarySelectedSlot(player, toolSlot, () -> player.gameMode.destroyBlock(pos));
+    }
+
+    private static ItemStack extractLinkedMiningTool(ServerPlayer player, Session session, String toolItemId) {
+        if (player == null || session == null || toolItemId == null || toolItemId.isBlank() || session.linkedStorages.isEmpty()) {
+            return ItemStack.EMPTY;
+        }
+        ResourceLocation id = ResourceLocation.tryParse(toolItemId);
+        if (id == null || !BuiltInRegistries.ITEM.containsKey(id)) {
+            return ItemStack.EMPTY;
+        }
+        Item item = BuiltInRegistries.ITEM.get(id);
+        if (item instanceof BlockItem) {
+            return ItemStack.EMPTY;
+        }
+        List<LinkedHandler> activeLinked = resolveLinkedHandlers(player, session);
+        if (activeLinked.isEmpty()) {
+            return ItemStack.EMPTY;
+        }
+        List<IItemHandler> handlers = new ArrayList<>(activeLinked.size());
+        for (LinkedHandler linked : activeLinked) {
+            handlers.add(linked.handler());
+        }
+        return extractOneFromNetwork(handlers, player, item);
+    }
+
+    private static void refundLinkedMiningTool(ServerPlayer player, Session session, ItemStack stack) {
+        if (player == null || session == null || stack == null || stack.isEmpty()) {
+            return;
+        }
+        List<LinkedHandler> activeLinked = resolveLinkedHandlers(player, session);
+        List<IItemHandler> handlers = new ArrayList<>(activeLinked.size());
+        for (LinkedHandler linked : activeLinked) {
+            handlers.add(linked.handler());
+        }
+        refundToLinked(handlers, player, stack);
+    }
+
+    private static MiningDestroyOutcome destroyBlockWithTemporaryMainHand(ServerPlayer player, BlockPos pos, ItemStack tool) {
+        ItemStack previousMainHand = player.getMainHandItem().copy();
+        player.setItemInHand(InteractionHand.MAIN_HAND, tool.copy());
+        boolean broken;
+        ItemStack remainder;
+        try {
+            broken = player.gameMode.destroyBlock(pos);
+        } finally {
+            remainder = player.getMainHandItem().copy();
+            player.setItemInHand(InteractionHand.MAIN_HAND, previousMainHand);
+        }
+        return new MiningDestroyOutcome(broken, remainder);
     }
 
     private static float removeMiningSpeedPenalty(ServerPlayer player, float destroyStep) {
@@ -3302,7 +3494,7 @@ public final class RtsStorageManager {
         }
         FluidStack targetFluid = simulated.fluid().copy();
         targetFluid.setAmount(FLUID_TRANSFER_MB);
-        if (insertFluidIntoNetwork(session, fluidHandlers, targetFluid, false) < FLUID_TRANSFER_MB) {
+        if (insertFluidIntoNetwork(player, session, fluidHandlers, targetFluid, false) < FLUID_TRANSFER_MB) {
             refundToLinked(itemHandlers, player, extracted);
             return false;
         }
@@ -3314,7 +3506,7 @@ public final class RtsStorageManager {
         }
         FluidStack insertFluid = executed.fluid().copy();
         insertFluid.setAmount(FLUID_TRANSFER_MB);
-        int inserted = insertFluidIntoNetwork(session, fluidHandlers, insertFluid, true);
+        int inserted = insertFluidIntoNetwork(player, session, fluidHandlers, insertFluid, true);
         if (inserted < FLUID_TRANSFER_MB) {
             refundToLinked(itemHandlers, player, extracted);
             return false;
@@ -3345,7 +3537,7 @@ public final class RtsStorageManager {
         }
         FluidStack targetFluid = simulated.fluid().copy();
         targetFluid.setAmount(FLUID_TRANSFER_MB);
-        if (insertFluidIntoNetwork(session, fluidHandlers, targetFluid, false) < FLUID_TRANSFER_MB) {
+        if (insertFluidIntoNetwork(player, session, fluidHandlers, targetFluid, false) < FLUID_TRANSFER_MB) {
             return false;
         }
 
@@ -3355,7 +3547,7 @@ public final class RtsStorageManager {
         }
         FluidStack insertFluid = executed.fluid().copy();
         insertFluid.setAmount(FLUID_TRANSFER_MB);
-        int inserted = insertFluidIntoNetwork(session, fluidHandlers, insertFluid, true);
+        int inserted = insertFluidIntoNetwork(player, session, fluidHandlers, insertFluid, true);
         if (inserted < FLUID_TRANSFER_MB) {
             return false;
         }
@@ -3413,7 +3605,7 @@ public final class RtsStorageManager {
         return new ContainerDrainOutcome(drained.copy(), handler.getContainer().copy());
     }
 
-    private static int insertFluidIntoNetwork(Session session, List<LinkedFluidHandler> fluidHandlers, FluidStack fluidStack,
+    private static int insertFluidIntoNetwork(ServerPlayer player, Session session, List<LinkedFluidHandler> fluidHandlers, FluidStack fluidStack,
             boolean execute) {
         if (fluidStack.isEmpty() || fluidStack.getAmount() <= 0) {
             return 0;
@@ -3443,7 +3635,7 @@ public final class RtsStorageManager {
         }
         String fluidId = id.toString();
         long stored = session.internalFluidMb.getOrDefault(fluidId, 0L);
-        long space = Math.max(0L, INTERNAL_FLUID_CAPACITY_MB - stored);
+        long space = Math.max(0L, internalFluidCapacityMb(player) - stored);
         int toInternal = (int) Math.min((long) remaining, space);
         if (toInternal > 0) {
             if (execute) {
@@ -3664,7 +3856,7 @@ public final class RtsStorageManager {
         if (player == null) {
             return 0;
         }
-        return Math.min(PLAYER_HOTBAR_SLOT_COUNT, player.getInventory().getContainerSize());
+        return 0;
     }
 
     private static int getPlayerMainInventoryEndExclusive(ServerPlayer player) {
@@ -4771,7 +4963,7 @@ public final class RtsStorageManager {
     }
 
     private static boolean absorbNearbyDropsIntoLinked(ServerPlayer player, BlockPos pos, Session session) {
-        if (session.linkedPositions.isEmpty()) {
+        if (session.linkedStorages.isEmpty()) {
             return false;
         }
         List<LinkedHandler> linked = resolveLinkedHandlers(player, session);
@@ -4969,7 +5161,7 @@ public final class RtsStorageManager {
 
     private static InteractionResult interactWithLinkedItem(ServerPlayer player, ServerLevel level, Session session,
             Entity targetEntity, BlockHitResult blockHit, Vec3 hit, String itemId, RayContext rayContext) {
-        if (itemId == null || itemId.isBlank() || session.linkedPositions.isEmpty()) {
+        if (itemId == null || itemId.isBlank() || session.linkedStorages.isEmpty()) {
             return InteractionResult.PASS;
         }
 
@@ -5367,18 +5559,26 @@ public final class RtsStorageManager {
         return null;
     }
 
-    private static String resolveDisplayName(ServerPlayer player, BlockPos pos) {
-        return player.serverLevel().getBlockState(pos).getBlock().getName().getString();
+    private static String resolveDisplayName(ServerLevel level, BlockPos pos) {
+        return level.getBlockState(pos).getBlock().getName().getString();
     }
 
     private static List<LinkedHandler> resolveLinkedHandlers(ServerPlayer player, Session session) {
         sanitizeSessionDimension(player, session);
-        if (session.linkedPositions.isEmpty()) {
+        if (session.linkedStorages.isEmpty()) {
             return List.of();
         }
 
         List<LinkedHandler> out = new ArrayList<>();
-        for (BlockPos pos : session.linkedPositions) {
+        ResourceKey<Level> currentDimension = player.serverLevel().dimension();
+        for (LinkedStorageRef ref : session.linkedStorages) {
+            if (ref == null || ref.pos() == null || !currentDimension.equals(ref.dimension())) {
+                continue;
+            }
+            BlockPos pos = ref.pos();
+            if (!RtsProgressionManager.canAccessHomeRadius(player, pos)) {
+                continue;
+            }
             if (!player.serverLevel().hasChunkAt(pos)) {
                 continue;
             }
@@ -5386,21 +5586,29 @@ public final class RtsStorageManager {
             if (handler == null) {
                 continue;
             }
-            String name = session.linkedNames.computeIfAbsent(pos, p -> resolveDisplayName(player, p));
-            boolean allowStore = !isExtractOnlyLink(session, pos);
-            out.add(new LinkedHandler(pos, name, new LinkedItemHandlerView(handler, allowStore), allowStore));
+            String name = session.linkedNames.computeIfAbsent(ref, ignored -> resolveDisplayName(player.serverLevel(), pos));
+            boolean allowStore = !isExtractOnlyLink(session, ref);
+            out.add(new LinkedHandler(ref, name, new LinkedItemHandlerView(handler, allowStore), allowStore));
         }
         return out;
     }
 
     private static List<LinkedFluidHandler> resolveLinkedFluidHandlers(ServerPlayer player, Session session) {
         sanitizeSessionDimension(player, session);
-        if (session.linkedPositions.isEmpty()) {
+        if (session.linkedStorages.isEmpty()) {
             return List.of();
         }
 
         List<LinkedFluidHandler> out = new ArrayList<>();
-        for (BlockPos pos : session.linkedPositions) {
+        ResourceKey<Level> currentDimension = player.serverLevel().dimension();
+        for (LinkedStorageRef ref : session.linkedStorages) {
+            if (ref == null || ref.pos() == null || !currentDimension.equals(ref.dimension())) {
+                continue;
+            }
+            BlockPos pos = ref.pos();
+            if (!RtsProgressionManager.canAccessHomeRadius(player, pos)) {
+                continue;
+            }
             if (!player.serverLevel().hasChunkAt(pos)) {
                 continue;
             }
@@ -5408,9 +5616,9 @@ public final class RtsStorageManager {
             if (handler == null) {
                 continue;
             }
-            String name = session.linkedNames.computeIfAbsent(pos, p -> resolveDisplayName(player, p));
-            boolean allowStore = !isExtractOnlyLink(session, pos);
-            out.add(new LinkedFluidHandler(pos, name, new LinkedFluidHandlerView(handler, allowStore), allowStore));
+            String name = session.linkedNames.computeIfAbsent(ref, ignored -> resolveDisplayName(player.serverLevel(), pos));
+            boolean allowStore = !isExtractOnlyLink(session, ref);
+            out.add(new LinkedFluidHandler(ref, name, new LinkedFluidHandlerView(handler, allowStore), allowStore));
         }
         return out;
     }
@@ -5427,7 +5635,10 @@ public final class RtsStorageManager {
         if (!level.mayInteract(player, pos)) {
             return false;
         }
-        return true;
+        if (!RtsCameraManager.isWithinActionRange(player, pos)) {
+            return false;
+        }
+        return RtsProgressionManager.canAccessHomeRadius(player, pos);
     }
 
     private static boolean canAccessFluidPlacementTarget(ServerPlayer player, BlockPos pos) {
@@ -5439,7 +5650,9 @@ public final class RtsStorageManager {
             return false;
         }
 
-        if (level.mayInteract(player, pos) || RtsCameraManager.isWithinActionRadius(player, pos)) {
+        if (level.mayInteract(player, pos)
+                && RtsCameraManager.isWithinActionRange(player, pos)
+                && RtsProgressionManager.canAccessHomeRadius(player, pos)) {
             return true;
         }
 
@@ -5451,38 +5664,33 @@ public final class RtsStorageManager {
         if (!level.hasChunkAt(below)) {
             return false;
         }
-        return level.mayInteract(player, below) || RtsCameraManager.isWithinActionRadius(player, below);
+        return level.mayInteract(player, below)
+                && RtsCameraManager.isWithinActionRange(player, pos)
+                && RtsProgressionManager.canAccessHomeRadius(player, pos);
     }
 
     private static void sanitizeSessionDimension(ServerPlayer player, Session session) {
-        if (session.linkedDimension == null) {
+        if (session == null || session.linkedStorages.isEmpty()) {
             return;
         }
-        ResourceKey<Level> currentDimension = player.serverLevel().dimension();
-        if (session.linkedDimension.equals(currentDimension)) {
-            return;
-        }
-        session.linkedPositions.clear();
-        session.linkedNames.clear();
-        session.linkedModes.clear();
-        session.linkedDimension = null;
-        session.page = 0;
-        saveSessionToPlayerNbt(player, session);
+        session.linkedStorages.removeIf(ref -> ref == null || ref.dimension() == null || ref.pos() == null);
+        session.linkedNames.keySet().removeIf(ref -> ref == null || !session.linkedStorages.contains(ref));
+        session.linkedModes.keySet().removeIf(ref -> ref == null || !session.linkedStorages.contains(ref));
     }
 
     private static String buildLinkedSummary(Session session) {
-        int count = session.linkedPositions.size();
+        int count = session.linkedStorages.size();
         if (count <= 0) {
             return "No Storage";
         }
         if (count == 1) {
-            BlockPos pos = session.linkedPositions.get(0);
-            String name = session.linkedNames.getOrDefault(pos, "Linked Storage");
-            return isExtractOnlyLink(session, pos) ? name + " [Extract]" : name;
+            LinkedStorageRef ref = session.linkedStorages.get(0);
+            String name = session.linkedNames.getOrDefault(ref, "Linked Storage");
+            return isExtractOnlyLink(session, ref) ? name + " [Extract]" : name;
         }
         int extractOnly = 0;
-        for (BlockPos pos : session.linkedPositions) {
-            if (isExtractOnlyLink(session, pos)) {
+        for (LinkedStorageRef ref : session.linkedStorages) {
+            if (isExtractOnlyLink(session, ref)) {
                 extractOnly++;
             }
         }
@@ -5496,10 +5704,10 @@ public final class RtsStorageManager {
         return linkMode == LINK_MODE_EXTRACT_ONLY ? LINK_MODE_EXTRACT_ONLY : LINK_MODE_BIDIRECTIONAL;
     }
 
-    private static boolean isExtractOnlyLink(Session session, BlockPos pos) {
+    private static boolean isExtractOnlyLink(Session session, LinkedStorageRef ref) {
         return session != null
-                && pos != null
-                && sanitizeLinkMode(session.linkedModes.getOrDefault(pos, LINK_MODE_BIDIRECTIONAL)) == LINK_MODE_EXTRACT_ONLY;
+                && ref != null
+                && sanitizeLinkMode(session.linkedModes.getOrDefault(ref, LINK_MODE_BIDIRECTIONAL)) == LINK_MODE_EXTRACT_ONLY;
     }
 
     private static List<String> buildQuickSlotPayload(Session session) {
@@ -5544,16 +5752,35 @@ public final class RtsStorageManager {
         return guiBindingItemIds;
     }
 
-    private static List<Long> toPackedPositions(List<BlockPos> positions) {
-        List<Long> packed = new ArrayList<>(positions.size());
-        for (BlockPos pos : positions) {
-            packed.add(pos.asLong());
+    private static List<Long> toPackedPositions(ServerPlayer player, List<LinkedStorageRef> refs) {
+        ResourceKey<Level> currentDimension = player.serverLevel().dimension();
+        List<Long> packed = new ArrayList<>(refs.size());
+        for (LinkedStorageRef ref : refs) {
+            if (ref == null || ref.pos() == null || !currentDimension.equals(ref.dimension())) {
+                continue;
+            }
+            packed.add(ref.pos().asLong());
         }
         return packed;
     }
 
+    private static ResourceKey<Level> parseDimensionKey(String dimensionId) {
+        if (dimensionId == null || dimensionId.isBlank()) {
+            return null;
+        }
+        ResourceLocation key = ResourceLocation.tryParse(dimensionId);
+        return key == null ? null : ResourceKey.create(Registries.DIMENSION, key);
+    }
+
     private static long getHandlerReportedCount(IItemHandler handler, int slot, ItemStack stack) {
         return RtsAe2Compat.getReportedCount(handler, slot, stack);
+    }
+
+    private static long internalFluidCapacityMb(ServerPlayer player) {
+        if (player == null) {
+            return INTERNAL_FLUID_CAPACITY_MB;
+        }
+        return Math.max(0L, (long) RtsProgressionManager.getFluidCapacityBuckets(player) * FluidType.BUCKET_VOLUME);
     }
 
     private record Entry(ItemStack stack, String itemId, String namespace, String path, String label, long count) {
@@ -5668,10 +5895,19 @@ public final class RtsStorageManager {
         }
     }
 
-    private record LinkedHandler(BlockPos pos, String name, IItemHandler handler, boolean allowStore) {
+    private record LinkedStorageRef(ResourceKey<Level> dimension, BlockPos pos) {
     }
 
-    private record LinkedFluidHandler(BlockPos pos, String name, IFluidHandler handler, boolean allowStore) {
+    private record LinkedHandler(LinkedStorageRef ref, String name, IItemHandler handler, boolean allowStore) {
+        private BlockPos pos() {
+            return this.ref.pos();
+        }
+    }
+
+    private record LinkedFluidHandler(LinkedStorageRef ref, String name, IFluidHandler handler, boolean allowStore) {
+        private BlockPos pos() {
+            return this.ref.pos();
+        }
     }
 
     private record RecentEntry(String id, long amount, long capacity, byte kind) {
@@ -5806,6 +6042,9 @@ public final class RtsStorageManager {
         }
     }
 
+    private record MiningDestroyOutcome(boolean broken, ItemStack remainder) {
+    }
+
     private record OverflowOutcome(int movedToInventory, int dropped) {
         private static final OverflowOutcome EMPTY = new OverflowOutcome(0, 0);
 
@@ -5934,10 +6173,9 @@ public final class RtsStorageManager {
 
     private static final class Session {
         private BuilderMode mode = BuilderMode.INTERACT;
-        private final List<BlockPos> linkedPositions = new ArrayList<>();
-        private final Map<BlockPos, String> linkedNames = new HashMap<>();
-        private final Map<BlockPos, Byte> linkedModes = new HashMap<>();
-        private ResourceKey<Level> linkedDimension;
+        private final List<LinkedStorageRef> linkedStorages = new ArrayList<>();
+        private final Map<LinkedStorageRef, String> linkedNames = new HashMap<>();
+        private final Map<LinkedStorageRef, Byte> linkedModes = new HashMap<>();
         private int page;
         private String search = "";
         private String category = "all";
@@ -5953,9 +6191,10 @@ public final class RtsStorageManager {
         private int funnelTickCooldown;
         private final List<ItemStack> funnelBuffer = new ArrayList<>();
         private BlockPos miningPos;
-        private final Deque<BlockPos> miningQueue = new ArrayDeque<>();
+        private final List<BlockPos> ultimineTargets = new ArrayList<>();
         private Direction miningFace = Direction.DOWN;
         private int miningToolSlot;
+        private ItemStack miningLinkedTool = ItemStack.EMPTY;
         private float miningProgress;
         private int miningStage = -1;
         private long nextQuestDetectTick;

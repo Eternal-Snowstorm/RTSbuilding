@@ -2,10 +2,12 @@ package com.rtsbuilding.rtsbuilding.client;
 
 import com.rtsbuilding.rtsbuilding.RtsbuildingMod;
 
+import com.mojang.blaze3d.systems.RenderSystem;
+
+import net.minecraft.client.renderer.RenderType;
+import net.minecraft.client.renderer.RenderStateShard;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.LevelRenderer;
-import net.minecraft.client.renderer.MultiBufferSource;
-import net.minecraft.client.renderer.RenderType;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
 import net.minecraft.util.Mth;
@@ -23,11 +25,33 @@ import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
 
+import com.mojang.blaze3d.vertex.BufferBuilder;
+import com.mojang.blaze3d.vertex.ByteBufferBuilder;
+import com.mojang.blaze3d.vertex.DefaultVertexFormat;
+import com.mojang.blaze3d.vertex.MeshData;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
+import com.mojang.blaze3d.vertex.VertexFormat;
 
 @EventBusSubscriber(modid = RtsbuildingMod.MODID, value = Dist.CLIENT, bus = EventBusSubscriber.Bus.GAME)
 public final class RtsBoundaryRenderer {
+    private static final int GL_LEQUAL = 515;
+
+    private static final RenderType CHUNK_XRAY_LINES = RenderType.create(
+            "rtsbuilding_chunk_xray_lines",
+            DefaultVertexFormat.POSITION_COLOR_NORMAL,
+            VertexFormat.Mode.LINES,
+            8192,
+            RenderType.CompositeState.builder()
+                    .setShaderState(RenderStateShard.RENDERTYPE_LINES_SHADER)
+                    .setLineState(RenderStateShard.DEFAULT_LINE)
+                    .setTransparencyState(RenderStateShard.TRANSLUCENT_TRANSPARENCY)
+                    .setDepthTestState(RenderStateShard.NO_DEPTH_TEST)
+                    .setOutputState(RenderStateShard.MAIN_TARGET)
+                    .setWriteMaskState(RenderStateShard.COLOR_WRITE)
+                    .setCullState(RenderStateShard.NO_CULL)
+                    .createCompositeState(false));
+
     private RtsBoundaryRenderer() {
     }
 
@@ -52,34 +76,63 @@ public final class RtsBoundaryRenderer {
         poseStack.pushPose();
         poseStack.translate(-camPos.x, -camPos.y, -camPos.z);
 
-        MultiBufferSource.BufferSource bufferSource = minecraft.renderBuffers().bufferSource();
-        VertexConsumer lineBuffer = bufferSource.getBuffer(RenderType.lines());
-
-        double ax = controller.getAnchorX();
-        double ay = controller.getAnchorY();
-        double az = controller.getAnchorZ();
-        double r = controller.getMaxRadius();
-
-        double minX = ax - r;
-        double maxX = ax + r;
-        double minZ = az - r;
-        double maxZ = az + r;
-
-        // Drag limit boundary (3 chunks radius => 48 blocks)
-        LevelRenderer.renderLineBox(poseStack, lineBuffer, minX, ay - 0.25D, minZ, maxX, ay + 0.25D, maxZ,
-                1.0F, 0.25F, 0.25F, 1.0F);
-
         if (controller.isChunkCurtainVisible()) {
-            renderChunkGuides(minecraft, controller, poseStack, lineBuffer);
+            RenderType chunkLines = CHUNK_XRAY_LINES;
+            try (ByteBufferBuilder chunkLineBacking = new ByteBufferBuilder(chunkLines.bufferSize())) {
+                BufferBuilder chunkLineBuffer = new BufferBuilder(chunkLineBacking, chunkLines.mode, chunkLines.format);
+                renderChunkGuides(minecraft, controller, poseStack, chunkLineBuffer);
+                drawBuiltBufferNoDepth(chunkLines, chunkLineBuffer);
+            }
         }
 
-        renderLinkedStorages(minecraft, controller, poseStack, lineBuffer);
-        renderHoveredInteractionTarget(minecraft, controller, poseStack, lineBuffer);
-        renderShapeGhostPreview(minecraft, poseStack, bufferSource);
+        RenderType lines = RenderType.lines();
+        RenderType filledBox = RenderType.debugFilledBox();
+        try (ByteBufferBuilder lineBacking = new ByteBufferBuilder(lines.bufferSize());
+                ByteBufferBuilder fillBacking = new ByteBufferBuilder(filledBox.bufferSize())) {
+            BufferBuilder lineBuffer = new BufferBuilder(lineBacking, lines.mode, lines.format);
+            BufferBuilder fillBuffer = new BufferBuilder(fillBacking, filledBox.mode, filledBox.format);
 
-        bufferSource.endBatch(RenderType.lines());
-        bufferSource.endBatch(RenderType.debugFilledBox());
+            double ax = controller.getAnchorX();
+            double ay = controller.getAnchorY();
+            double az = controller.getAnchorZ();
+            double r = controller.getMaxRadius();
+
+            double minX = ax - r;
+            double maxX = ax + r;
+            double minZ = az - r;
+            double maxZ = az + r;
+
+            // Drag limit boundary (3 chunks radius => 48 blocks)
+            LevelRenderer.renderLineBox(poseStack, lineBuffer, minX, ay - 0.25D, minZ, maxX, ay + 0.25D, maxZ,
+                    1.0F, 0.25F, 0.25F, 1.0F);
+
+            renderLinkedStorages(minecraft, controller, poseStack, lineBuffer);
+            renderHoveredInteractionTarget(minecraft, controller, poseStack, lineBuffer);
+            renderShapeGhostPreview(minecraft, poseStack, lineBuffer, fillBuffer);
+
+            drawBuiltBuffer(lines, lineBuffer);
+            drawBuiltBuffer(filledBox, fillBuffer);
+        }
         poseStack.popPose();
+    }
+
+    private static void drawBuiltBuffer(RenderType renderType, BufferBuilder buffer) {
+        MeshData meshData = buffer.build();
+        if (meshData != null) {
+            renderType.draw(meshData);
+        }
+    }
+
+    private static void drawBuiltBufferNoDepth(RenderType renderType, BufferBuilder buffer) {
+        MeshData meshData = buffer.build();
+        if (meshData != null) {
+            RenderSystem.disableDepthTest();
+            RenderSystem.depthMask(false);
+            renderType.draw(meshData);
+            RenderSystem.depthMask(true);
+            RenderSystem.enableDepthTest();
+            RenderSystem.depthFunc(GL_LEQUAL);
+        }
     }
 
     private static void renderChunkGuides(
@@ -92,78 +145,71 @@ public final class RtsBoundaryRenderer {
         }
         int anchorChunkX = SectionPos.blockToSectionCoord(Mth.floor(controller.getAnchorX()));
         int anchorChunkZ = SectionPos.blockToSectionCoord(Mth.floor(controller.getAnchorZ()));
-        int chunkRange = 3;
+        int chunkRange = Math.max(1, Mth.ceil(controller.getMaxRadius() / 16.0D));
+        int minChunkX = anchorChunkX - chunkRange;
+        int maxChunkX = anchorChunkX + chunkRange;
+        int minChunkZ = anchorChunkZ - chunkRange;
+        int maxChunkZ = anchorChunkZ + chunkRange;
         double zMin = (anchorChunkZ - chunkRange) * 16.0D;
         double zMax = (anchorChunkZ + chunkRange + 1) * 16.0D;
         double xMin = (anchorChunkX - chunkRange) * 16.0D;
         double xMax = (anchorChunkX + chunkRange + 1) * 16.0D;
-        double yMin = minecraft.level.getMinBuildHeight();
-        double yMax = minecraft.level.getMaxBuildHeight();
-        double bandY = minecraft.player != null
-                ? Mth.clamp(minecraft.player.getY(), yMin + 1.0D, yMax - 1.0D)
-                : controller.getAnchorY();
-        double centerMinX = anchorChunkX * 16.0D;
-        double centerMaxX = centerMinX + 16.0D;
-        double centerMinZ = anchorChunkZ * 16.0D;
-        double centerMaxZ = centerMinZ + 16.0D;
+        double y = Math.floor(controller.getAnchorY()) + 0.06D;
 
-        for (int cx = anchorChunkX - chunkRange; cx <= anchorChunkX + chunkRange + 1; cx++) {
+        for (int cx = minChunkX; cx <= maxChunkX + 1; cx++) {
             double x = cx * 16.0D;
-            LevelRenderer.renderLineBox(
-                    poseStack,
-                    lineBuffer,
-                    x,
-                    yMin,
-                    zMin,
-                    x,
-                    yMax,
-                    zMax,
-                    0.26F,
-                    0.56F,
-                    1.0F,
-                    0.52F);
+            renderFlatChunkLineX(poseStack, lineBuffer, x, y, zMin, zMax);
         }
-        for (int cz = anchorChunkZ - chunkRange; cz <= anchorChunkZ + chunkRange + 1; cz++) {
+        for (int cz = minChunkZ; cz <= maxChunkZ + 1; cz++) {
             double z = cz * 16.0D;
-            LevelRenderer.renderLineBox(
-                    poseStack,
-                    lineBuffer,
-                    xMin,
-                    yMin,
-                    z,
-                    xMax,
-                    yMax,
-                    z,
-                    0.26F,
-                    0.56F,
-                    1.0F,
-                    0.52F);
+            renderFlatChunkLineZ(poseStack, lineBuffer, z, y, xMin, xMax);
         }
+    }
 
+    private static void renderFlatChunkLineX(
+            PoseStack poseStack,
+            VertexConsumer lineBuffer,
+            double x,
+            double y,
+            double zMin,
+            double zMax) {
+        double halfWidth = 0.018D;
+        double halfHeight = 0.035D;
+        LevelRenderer.renderLineBox(
+                poseStack,
+                lineBuffer,
+                x - halfWidth,
+                y - halfHeight,
+                zMin,
+                x + halfWidth,
+                y + halfHeight,
+                zMax,
+                0.18F,
+                0.96F,
+                1.0F,
+                0.95F);
+    }
+
+    private static void renderFlatChunkLineZ(
+            PoseStack poseStack,
+            VertexConsumer lineBuffer,
+            double z,
+            double y,
+            double xMin,
+            double xMax) {
+        double halfWidth = 0.018D;
+        double halfHeight = 0.035D;
         LevelRenderer.renderLineBox(
                 poseStack,
                 lineBuffer,
                 xMin,
-                bandY,
-                zMin,
+                y - halfHeight,
+                z - halfWidth,
                 xMax,
-                bandY,
-                zMax,
+                y + halfHeight,
+                z + halfWidth,
                 0.18F,
-                0.44F,
-                0.95F,
-                0.35F);
-        LevelRenderer.renderLineBox(
-                poseStack,
-                lineBuffer,
-                centerMinX,
-                yMin,
-                centerMinZ,
-                centerMaxX,
-                yMax,
-                centerMaxZ,
-                0.55F,
-                0.82F,
+                0.96F,
                 1.0F,
                 0.95F);
     }
@@ -277,8 +323,8 @@ public final class RtsBoundaryRenderer {
         }
     }
 
-    private static void renderShapeGhostPreview(Minecraft minecraft, PoseStack poseStack,
-            MultiBufferSource.BufferSource bufferSource) {
+    private static void renderShapeGhostPreview(Minecraft minecraft, PoseStack poseStack, VertexConsumer lineBuffer,
+            VertexConsumer fillBuffer) {
         if (!(minecraft.screen instanceof BuilderScreen builderScreen)) {
             return;
         }
@@ -294,7 +340,6 @@ public final class RtsBoundaryRenderer {
         float fillG = preview.readyConfirm() ? 0.72F : 0.55F;
         float fillB = preview.readyConfirm() ? 0.24F : 0.90F;
         float fillA = preview.readyConfirm() ? 0.22F : 0.16F;
-        VertexConsumer fillBuffer = bufferSource.getBuffer(RenderType.debugFilledBox());
 
         for (BlockPos pos : preview.blocks()) {
             double minX = pos.getX() + 0.03D;
@@ -318,7 +363,6 @@ public final class RtsBoundaryRenderer {
                     fillA);
         }
 
-        VertexConsumer lineBuffer = bufferSource.getBuffer(RenderType.lines());
         for (BlockPos pos : preview.blocks()) {
             double minX = pos.getX() + 0.03D;
             double minY = pos.getY() + 0.03D;
